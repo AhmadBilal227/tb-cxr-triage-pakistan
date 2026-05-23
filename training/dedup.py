@@ -1,7 +1,14 @@
-"""Cross-source dedup -> data/index_dedup.csv. These TB sets overlap (Qatar aggregates
-NLM Montgomery/Shenzhen + NIAID), so training on one and 'externally' testing on another
-leaks unless duplicates are removed first. Drops exact (md5) and near-duplicate (average-hash)
-images, keeping the first occurrence.
+"""Cross-source dedup -> data/index_dedup.csv.
+
+Qatar aggregates NLM (Montgomery/Shenzhen) + NIAID, so cross-source COPIES leak LODO unless
+removed. Two dup types:
+  - exact: md5 of the RAW file bytes (catches literal copies).
+  - near-dup: a discriminative perceptual hash (pHash, hash_size=16 -> 256-bit).
+
+Chest X-rays are globally similar (all frontal chests), so coarse average_hash collapses
+DISTINCT patients (it flagged TB and Normal images as "duplicates"). So we (a) use pHash at a
+tight threshold, and (b) only drop a near-dup when LABELS AGREE — a TB/Normal near-match is a
+contradiction (distinct patients), so we KEEP both and just report the count.
 """
 from __future__ import annotations
 import hashlib
@@ -12,61 +19,49 @@ import pandas as pd
 from PIL import Image
 
 REPO = Path(__file__).resolve().parents[1]
-
-# Hamming-distance threshold for near-duplicate detection (average hash, 64-bit).
-# Distance <= 5 treats images as duplicates; tuned for 256x256 greyscale CXRs.
-AHASH_THRESHOLD = 5
+PHASH_SIZE = 16          # 256-bit perceptual hash (far more discriminative than 64-bit aHash)
+PHASH_THRESHOLD = 6      # out of 256 bits (~2.3%) — only near-identical images match
 
 
 def main() -> None:
     df = pd.read_csv(REPO / "data" / "index.csv")
-    seen_md5: dict[str, tuple[str, int]] = {}   # md5 -> (path, label)
-    # Keep imagehash objects (not strings) so we can compute Hamming distance.
-    # Near-dup detection is a one-time offline O(n·k) cost where k = kept images so far.
-    kept_ahashes: list[tuple[imagehash.ImageHash, str, int]] = []  # (hash, path, label)
+    seen_md5: set[str] = set()
+    kept_ph: list[tuple[imagehash.ImageHash, int]] = []  # (phash, label)
     keep: list = []
-    dropped = 0
+    dropped_exact = dropped_near = conflicts = 0
     for _, r in df.iterrows():
-        path = r["path"]
         label = int(r["label"])
-        full = path if str(path).startswith("/") else str(REPO / path)
+        full = r["path"] if str(r["path"]).startswith("/") else str(REPO / r["path"])
         try:
-            im = Image.open(full).convert("L").resize((256, 256))
+            raw = Path(full).read_bytes()
         except Exception:
             continue
-        md5 = hashlib.md5(im.tobytes()).hexdigest()
-        ah = imagehash.average_hash(im)
-        # Drop if exact md5 match OR Hamming distance <= threshold vs any kept hash.
-        is_md5_dup = md5 in seen_md5
-        near_match: tuple[imagehash.ImageHash, str, int] | None = None
-        if not is_md5_dup and kept_ahashes:
-            best = min(kept_ahashes, key=lambda t: abs(ah - t[0]))
-            if abs(ah - best[0]) <= AHASH_THRESHOLD:
-                near_match = best
-        if is_md5_dup or near_match is not None:
-            dropped += 1
-            if is_md5_dup:
-                kept_path, kept_label = seen_md5[md5]
-                if label != kept_label:
-                    print(
-                        f"WARNING: label conflict (md5) kept={kept_path!r} label={kept_label}"
-                        f" vs dropped={path!r} label={label}"
-                    )
-            else:
-                assert near_match is not None
-                _, kept_path, kept_label = near_match
-                if label != kept_label:
-                    print(
-                        f"WARNING: label conflict (near-dup) kept={kept_path!r} label={kept_label}"
-                        f" vs dropped={path!r} label={label}"
-                    )
+        md5 = hashlib.md5(raw).hexdigest()
+        if md5 in seen_md5:
+            dropped_exact += 1
             continue
-        seen_md5[md5] = (path, label)
-        kept_ahashes.append((ah, path, label))
+        try:
+            ph = imagehash.phash(Image.open(full).convert("L"), hash_size=PHASH_SIZE)
+        except Exception:
+            continue
+        near = any((ph - kp) <= PHASH_THRESHOLD and kl == label for kp, kl in kept_ph)
+        if near:
+            dropped_near += 1
+            continue
+        # different-label near-match => distinct patients, keep both, just count
+        if any((ph - kp) <= PHASH_THRESHOLD and kl != label for kp, kl in kept_ph):
+            conflicts += 1
+        seen_md5.add(md5)
+        kept_ph.append((ph, label))
         keep.append(r)
+
     out = pd.DataFrame(keep)
     out.to_csv(REPO / "data" / "index_dedup.csv", index=False)
-    print(f"dedup: kept {len(out)} / {len(df)} ({dropped} duplicates dropped)")
+    print(
+        f"dedup: kept {len(out)} / {len(df)} "
+        f"(exact {dropped_exact}, same-label near {dropped_near} dropped; "
+        f"{conflicts} cross-label near-matches KEPT as distinct)"
+    )
     if len(out):
         print(out.groupby(["source", "label"]).size())
 
