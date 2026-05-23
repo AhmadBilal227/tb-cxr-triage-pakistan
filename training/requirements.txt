@@ -11,3 +11,5 @@ numpy>=1.26
 onnx>=1.16
 onnxruntime>=1.19
 tqdm>=4.66
+torchxrayvision>=1.2.0
+
