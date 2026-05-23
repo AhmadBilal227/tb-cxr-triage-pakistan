@@ -1,5 +1,6 @@
 import type {
   Adjudication,
+  CalibrationParams,
   EnsembleMember,
   EnsembleResult,
   PipelineEvent,
@@ -11,6 +12,7 @@ import type {
   Settings,
   Verdict,
 } from '@/lib/types';
+import { applyCalibration, effectiveWeights, fuseLogOdds } from '@/lib/calibration';
 import {
   ABSTAIN_RULES,
   ENSEMBLE_WEIGHTS,
@@ -51,25 +53,26 @@ const FROM_SEVERITY: Verdict[] = ['no_tb', 'abstain', 'tb'];
  * Screening-biased decision policy. Asymmetric on purpose: a low bar to flag, a high
  * bar to clear. fusedProb includes the CNN once it is live; the vlmSafetyThreshold lets
  * the VLM escalate on its own (catching CNN false negatives) without being able to veto.
+ * When fitted calibration params are present, uses their conformal thresholds; otherwise
+ * falls back to the hard-coded SCREENING_POLICY constants.
  */
 function screeningPolicy(
   fusedProb: number,
   vlmProb: number | null,
   vlmUncertainty: number,
+  cal: CalibrationParams | null,
 ): { verdict: Verdict; reason: string } {
-  const flag =
-    fusedProb >= SCREENING_POLICY.tbFlag ||
-    (vlmProb !== null && vlmProb >= SCREENING_POLICY.vlmSafetyThreshold);
+  const tauLow = cal?.conformal.tauLow ?? SCREENING_POLICY.negClear;
+  const tauHigh = cal?.conformal.tauHigh ?? SCREENING_POLICY.tbFlag;
+  const vlmSafe = cal?.vlmSafetyThreshold ?? SCREENING_POLICY.vlmSafetyThreshold;
+  const flag = fusedProb >= tauHigh || (vlmProb !== null && vlmProb >= vlmSafe);
   if (flag) {
-    return { verdict: 'tb', reason: `screening flag (fused ${fusedProb.toFixed(2)} ≥ ${SCREENING_POLICY.tbFlag} or VLM ≥ ${SCREENING_POLICY.vlmSafetyThreshold})` };
+    return { verdict: 'tb', reason: `flag (fused ${fusedProb.toFixed(2)} ≥ τ_high ${tauHigh.toFixed(2)} or VLM ≥ ${vlmSafe.toFixed(2)})` };
   }
-  const canClear =
-    fusedProb <= SCREENING_POLICY.negClear && vlmUncertainty <= SCREENING_POLICY.maxClearUncertainty;
-  if (canClear) return { verdict: 'no_tb', reason: '' };
-  return {
-    verdict: 'abstain',
-    reason: `prob ${fusedProb.toFixed(2)} in uncertain band (spread ${vlmUncertainty.toFixed(2)})`,
-  };
+  if (fusedProb < tauLow && vlmUncertainty <= SCREENING_POLICY.maxClearUncertainty) {
+    return { verdict: 'no_tb', reason: '' };
+  }
+  return { verdict: 'abstain', reason: `prob ${fusedProb.toFixed(2)} in [τ_low ${tauLow.toFixed(2)}, τ_high ${tauHigh.toFixed(2)}) band` };
 }
 
 /** Take the more cautious (higher-severity) verdict: tb > abstain > no_tb. */
@@ -303,8 +306,25 @@ export async function runPipeline(
   const members = await Promise.all([tbMember, generalMember, vlmMember]);
   const returning = members.filter((m) => m.tb_prob !== null);
   const probs = returning.map((m) => m.tb_prob as number);
-  const totalWeight = returning.reduce((a, m) => a + m.weight, 0) || 1;
-  const weightedScore = returning.reduce((a, m) => a + m.weight * (m.tb_prob as number), 0) / totalWeight;
+  const cal = settings.calibration;
+  const calProbOf = (m: EnsembleMember): number => {
+    if (m.tb_prob === null) return 0.5;
+    const c = cal?.perModel[m.id];
+    return c ? applyCalibration(m.tb_prob, c) : m.tb_prob;
+  };
+  let weightedScore: number;
+  if (cal) {
+    const present = returning.map((m) => m.id);
+    const w = effectiveWeights(present, cal.fusion.weights, cal.fusion.mode);
+    weightedScore = fuseLogOdds(
+      returning.map((m) => ({ id: m.id, prob: calProbOf(m) })),
+      w,
+      cal.fusion.mode === 'fitted' ? cal.fusion.bias : 0,
+    );
+  } else {
+    const totalWeight = returning.reduce((a, m) => a + m.weight, 0) || 1;
+    weightedScore = returning.reduce((a, m) => a + m.weight * (m.tb_prob as number), 0) / totalWeight;
+  }
   const { std } = popStats(probs);
   const disagreement = probs.length ? Math.max(...probs) - Math.min(...probs) : 0;
   const replicateFallbackCount = members.filter((m) => m.provider_used === 'replicate').length;
@@ -391,7 +411,7 @@ export async function runPipeline(
     const vlmM = members.find((m) => m.id === 'vlm');
     const vlmProb = vlmM?.tb_prob ?? null;
     const vlmUncertainty = vlmM?.uncertainty ?? 0;
-    const policy = screeningPolicy(ensemble.weightedScore, vlmProb, vlmUncertainty);
+    const policy = screeningPolicy(ensemble.weightedScore, vlmProb, vlmUncertainty, settings.calibration);
     const guardrailReasons = evaluateAbstainRules(parsed.confidence, ensemble, rag);
 
     const finalVerdict = mostCautious(
