@@ -73,3 +73,34 @@ export function calibratedNLL(probs: number[], labels: (0 | 1)[], c: MemberCalib
     c.method === 'platt' ? sigmoid(c.A * zi + c.B) : sigmoid(zi / c.T),
   );
 }
+
+export function fitPlatt(
+  probs: number[],
+  labels: (0 | 1)[],
+  iters = 2000,
+  lr = 0.1,
+): { A: number; B: number } {
+  const z = probs.map(logit);
+  const n = z.length;
+  // Prior-corrected targets for small samples (Platt 1999 / King-Zeng).
+  const nPos = labels.filter((y) => y === 1).length;
+  const nNeg = n - nPos;
+  const tPos = n < 200 ? (nPos + 1) / (nPos + 2) : 1;
+  const tNeg = n < 200 ? 1 / (nNeg + 2) : 0;
+  let A = 1;
+  let B = 0;
+  for (let t = 0; t < iters; t++) {
+    let gA = 0;
+    let gB = 0;
+    for (let i = 0; i < n; i++) {
+      const q = sigmoid(A * (z[i] ?? 0) + B);
+      const target = labels[i] === 1 ? tPos : tNeg;
+      const e = q - target;
+      gA += e * (z[i] ?? 0);
+      gB += e;
+    }
+    A -= (lr * gA) / n;
+    B -= (lr * gB) / n;
+  }
+  return { A, B };
+}

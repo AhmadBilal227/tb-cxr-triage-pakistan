@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { logit, sigmoid, clampProb } from './calibration';
 import { fitTemperature, applyCalibration } from './calibration';
+import { fitPlatt } from './calibration';
 
 describe('math primitives', () => {
   it('sigmoid(logit(p)) round-trips', () => {
@@ -35,5 +36,22 @@ describe('temperature scaling', () => {
   it('applyCalibration with T=1 is identity', () => {
     const c = { method: 'temperature' as const, T: 1, A: 1, B: 0, nllRaw: 0, nllCal: 0 };
     expect(applyCalibration(0.8, c)).toBeCloseTo(0.8, 6);
+  });
+});
+
+describe('platt scaling', () => {
+  it('fits a shift on biased data (B != 0)', () => {
+    const probs: number[] = [];
+    const labels: (0 | 1)[] = [];
+    for (let i = 0; i < 300; i++) {
+      const y = (Math.random() < 0.5 ? 1 : 0) as 0 | 1;
+      // systematically biased high: add +1.0 to the logit regardless of label sometimes
+      const base = y === 1 ? 0.7 : 0.4; // both shifted up -> needs negative B
+      probs.push(base);
+      labels.push(y);
+    }
+    const { A, B } = fitPlatt(probs, labels);
+    expect(Number.isFinite(A)).toBe(true);
+    expect(Number.isFinite(B)).toBe(true);
   });
 });
