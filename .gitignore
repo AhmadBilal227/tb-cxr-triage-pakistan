@@ -9,3 +9,9 @@ dist-ssr
 # Never commit API keys
 .env
 .env.*
+
+# Training data + large model assets (downloaded/generated, not committed)
+data/
+*.onnx
+features.npy
+
