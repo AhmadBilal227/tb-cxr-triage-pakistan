@@ -6,9 +6,12 @@ import { runPipeline } from '@/lib/pipeline/orchestrator';
 import { parseLabelCsv } from '@/lib/labeledSet';
 import { computeMetrics, type Metrics, type ValItem } from '@/lib/metrics';
 import { useSettings } from '@/store/settings';
+import { settingsStore } from '@/store/settings';
 import { DISCLAIMER, downloadJSON } from '@/lib/export';
 import { SafetyBanner } from '@/components/SafetyBanner';
 import { Button } from '@/components/ui/button';
+import { fitCalibration } from '@/lib/calibration';
+import type { CalibrationSample } from '@/lib/types';
 
 interface HoldoutImage {
   filename: string;
@@ -26,6 +29,7 @@ export default function Validate(): JSX.Element {
   const [items, setItems] = useState<ValItem[]>([]);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [samples, setSamples] = useState<CalibrationSample[]>([]);
 
   const onFiles = useCallback(async (files: FileList | null) => {
     if (!files) return;
@@ -54,6 +58,7 @@ export default function Validate(): JSX.Element {
     setRunning(true);
     setProgress({ done: 0, total: holdout.length });
     const collected: ValItem[] = [];
+    const sampleAcc: CalibrationSample[] = [];
     for (let i = 0; i < holdout.length; i++) {
       const h = holdout[i]!;
       try {
@@ -65,6 +70,17 @@ export default function Validate(): JSX.Element {
           score: r.ensemble?.weightedScore ?? null,
           abstained: r.adjudication?.verdict === 'abstain',
           halted: !!r.halted,
+        });
+        // Harvest per-member raw tb_prob for calibration.
+        const mp: CalibrationSample['memberProbs'] = {};
+        for (const m of r.ensemble?.members ?? []) {
+          if (m.tb_prob !== null) mp[m.id] = m.tb_prob;
+        }
+        sampleAcc.push({
+          filename: h.filename,
+          label: h.label,
+          memberProbs: mp,
+          vlmUncertainty: r.ensemble?.members.find((m) => m.id === 'vlm')?.uncertainty ?? null,
         });
       } catch (err) {
         collected.push({
@@ -81,6 +97,7 @@ export default function Validate(): JSX.Element {
       setItems([...collected]);
     }
     setMetrics(computeMetrics(collected));
+    setSamples([...sampleAcc]);
     setRunning(false);
   }, [holdout, settings]);
 
@@ -102,6 +119,15 @@ export default function Validate(): JSX.Element {
       `tb-triage-validation-${Date.now()}.json`,
     );
   }, [metrics, items, settings]);
+
+  const calibrate = useCallback(() => {
+    if (samples.length === 0) return;
+    const params = fitCalibration(samples);
+    settingsStore.setCalibration(params);
+    setMsg(
+      `Calibrated on ${params.nSamples} cases. τ_low=${params.conformal.tauLow.toFixed(3)} τ_high=${params.conformal.tauHigh.toFixed(3)}${params.conformal.incomplete ? ' (insufficient per-class samples — band is conservative)' : ''}`,
+    );
+  }, [samples]);
 
   const exportPDF = useCallback(() => {
     if (!metrics) return;
@@ -168,6 +194,18 @@ export default function Validate(): JSX.Element {
                   </Button>
                 </>
               )}
+              <Button variant="outline" onClick={calibrate} disabled={samples.length === 0}>
+                Calibrate from this set
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  settingsStore.setCalibration(null);
+                  setMsg('Calibration cleared (using default policy).');
+                }}
+              >
+                Clear calibration
+              </Button>
             </div>
             {msg && <p className="text-[11px] text-muted">{msg}</p>}
             <input
