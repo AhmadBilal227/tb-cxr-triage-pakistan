@@ -91,6 +91,19 @@ export interface Settings {
 }
 
 // ---------------------------------------------------------------------------
+// Calibration types
+// ---------------------------------------------------------------------------
+
+export interface MemberCalibration {
+  method: 'temperature' | 'platt';
+  T: number; // used when method==='temperature'
+  A: number;
+  B: number; // used when method==='platt'
+  nllRaw: number;
+  nllCal: number;
+}
+
+// ---------------------------------------------------------------------------
 // Pipeline stage status + events (drives the live Agent Trace panel)
 // ---------------------------------------------------------------------------
 
