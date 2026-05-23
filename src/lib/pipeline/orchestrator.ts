@@ -306,11 +306,16 @@ export async function runPipeline(
   const members = await Promise.all([tbMember, generalMember, vlmMember]);
   const returning = members.filter((m) => m.tb_prob !== null);
   const probs = returning.map((m) => m.tb_prob as number);
-  const cal = settings.calibration;
+  // Use the fitted calibration only when it is complete; an incomplete fit (too few
+  // per-class samples) has meaningless thresholds and must not override the validated
+  // default policy. When null, the legacy arithmetic-mean + SCREENING_POLICY path runs.
+  const cal = settings.calibration && !settings.calibration.conformal.incomplete
+    ? settings.calibration
+    : null;
   const calProbOf = (m: EnsembleMember): number => {
-    if (m.tb_prob === null) return 0.5;
+    const raw = m.tb_prob as number;
     const c = cal?.perModel[m.id];
-    return c ? applyCalibration(m.tb_prob, c) : m.tb_prob;
+    return c ? applyCalibration(raw, c) : raw;
   };
   let weightedScore: number;
   if (cal) {
@@ -409,9 +414,16 @@ export async function runPipeline(
     // guardrails + the model's own verdict — take the MOST CAUTIOUS. The model and policy
     // can escalate; neither can clear a flagged case. (tb > abstain > no_tb)
     const vlmM = members.find((m) => m.id === 'vlm');
-    const vlmProb = vlmM?.tb_prob ?? null;
+    const vlmRaw = vlmM?.tb_prob ?? null;
     const vlmUncertainty = vlmM?.uncertainty ?? 0;
-    const policy = screeningPolicy(ensemble.weightedScore, vlmProb, vlmUncertainty, settings.calibration);
+    // vlmSafetyThreshold is fit on the CALIBRATED VLM prob, so the policy must compare
+    // against the calibrated value. Keep fusedProb and vlmProb consistently both-calibrated
+    // (when cal active) or both-raw (legacy path).
+    const vlmProbForPolicy =
+      cal && vlmRaw !== null && cal.perModel.vlm
+        ? applyCalibration(vlmRaw, cal.perModel.vlm)
+        : vlmRaw;
+    const policy = screeningPolicy(ensemble.weightedScore, vlmProbForPolicy, vlmUncertainty, cal);
     const guardrailReasons = evaluateAbstainRules(parsed.confidence, ensemble, rag);
 
     const finalVerdict = mostCautious(
@@ -440,7 +452,7 @@ export async function runPipeline(
         policyVerdict: policy.verdict,
         modelVerdict: parsed.verdict,
         fusedProb: ensemble.weightedScore,
-        vlmProb,
+        vlmProb: vlmProbForPolicy,
         vlmUncertainty,
       },
     };
