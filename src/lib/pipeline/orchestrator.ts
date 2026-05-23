@@ -224,6 +224,7 @@ export async function runPipeline(
       providerLog.push({ stage: 'ensemble.tb', provider_used: null, latency_ms: null, fell_back: false });
       emit({ type: 'ensemble_member', member: m });
       emit({ type: 'error', stage: 'ensemble.tb', message });
+      emit({ type: 'stage_status', stage: 'ensemble.tb', status: 'error' });
       return m;
     }
   })();
@@ -254,6 +255,7 @@ export async function runPipeline(
       providerLog.push({ stage: 'ensemble.general', provider_used: null, latency_ms: null, fell_back: false });
       emit({ type: 'ensemble_member', member: m });
       emit({ type: 'error', stage: 'ensemble.general', message });
+      emit({ type: 'stage_status', stage: 'ensemble.general', status: 'error' });
       return m;
     }
   })();
@@ -299,12 +301,14 @@ export async function runPipeline(
       providerLog.push({ stage: 'ensemble.vlm', provider_used: null, latency_ms: null, fell_back: false });
       emit({ type: 'ensemble_member', member: m });
       emit({ type: 'error', stage: 'ensemble.vlm', message });
+      emit({ type: 'stage_status', stage: 'ensemble.vlm', status: 'error' });
       return m;
     }
   })();
 
   const members = await Promise.all([tbMember, generalMember, vlmMember]);
   const returning = members.filter((m) => m.tb_prob !== null);
+  const noPerception = returning.length === 0;
   const probs = returning.map((m) => m.tb_prob as number);
   // Use the fitted calibration only when it is complete; an incomplete fit (too few
   // per-class samples) has meaningless thresholds and must not override the validated
@@ -385,6 +389,7 @@ export async function runPipeline(
       const message = (err as Error).message;
       rag = { neighbors: [], embedding_provider: null, skipped: true, skipReason: `Retrieval failed: ${message}` };
       emit({ type: 'error', stage: 'rag', message });
+      emit({ type: 'stage_status', stage: 'rag', status: 'error' });
       emit({ type: 'rag_done', result: rag });
     }
   }
@@ -430,10 +435,14 @@ export async function runPipeline(
     const policy = screeningPolicy(ensemble.weightedScore, vlmProbForPolicy, vlmUncertainty, cal);
     const guardrailReasons = evaluateAbstainRules(modelConfidence, ensemble, rag);
 
+    if (noPerception) {
+      guardrailReasons.push('no perception model returned a result');
+    }
     const finalVerdict = mostCautious(
       policy.verdict,
       modelVerdict,
       guardrailReasons.length > 0 ? 'abstain' : 'no_tb',
+      noPerception ? 'abstain' : 'no_tb',
     );
     const reasons = [
       ...(policy.verdict !== 'no_tb' && policy.reason ? [policy.reason] : []),
@@ -472,6 +481,7 @@ export async function runPipeline(
       abstain_reason: message, auto_abstained: true, auto_abstain_reasons: [`adjudicator error: ${message}`],
     };
     emit({ type: 'error', stage: 'adjudicate', message });
+    emit({ type: 'stage_status', stage: 'adjudicate', status: 'error' });
     emit({ type: 'adjudicate_done', result: adjudication });
   }
   run.adjudication = adjudication;

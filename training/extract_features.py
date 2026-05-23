@@ -66,6 +66,8 @@ def main() -> None:
             print("skip", row["path"], repr(e))
     flush()
 
+    if not feats:
+        raise SystemExit("no features extracted — check data/index_dedup.csv paths")
     X = np.stack(feats)
     sub = df.iloc[kept_rows]
     np.savez_compressed(

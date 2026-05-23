@@ -99,6 +99,8 @@ def main() -> None:
     p = predict(head, X)
     thr, spec = threshold_for_sensitivity(y, p)
     json.dump({"threshold": thr, "target_sensitivity": 0.92}, open(DATA / "tb_threshold.json", "w"))
+    # NOTE: thr above is in-sample (optimistic); LODO numbers above are the honest estimate.
+    # In deployment, re-fit this threshold on a held-out set rather than the training data.
     print(f"\nfinal head -> data/tb_head.pt ; threshold@92%sens={thr:.3f} (in-sample spec={spec:.3f})")
 
 

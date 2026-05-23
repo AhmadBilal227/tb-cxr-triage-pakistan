@@ -19,13 +19,15 @@ TB_SUF = re.compile(r"_1\.(png|jpe?g|bmp)$", re.I)
 NEG_SUF = re.compile(r"_0\.(png|jpe?g|bmp)$", re.I)
 
 
-def label_from_path(p: str) -> int | None:
-    s = p.lower()
+def label_from_path(rel: Path) -> int | None:
+    """Classify using the path RELATIVE to the source dir to avoid ancestor dir pollution."""
+    s = str(rel).lower()
+    parts = [pt.lower() for pt in rel.parts]
     if "mask" in s:
         return None
-    if "tubercul" in s or TB_SUF.search(s) or "/tb/" in s or s.endswith("/tb"):
+    if "tubercul" in s or TB_SUF.search(s) or "tb" in parts:
         return 1
-    if "normal" in s or "health" in s or NEG_SUF.search(s):
+    if any(pt in ("normal", "healthy") for pt in parts) or NEG_SUF.search(s):
         return 0
     return None
 
@@ -44,7 +46,7 @@ def main() -> None:
         for p in src_dir.rglob("*"):
             if not (p.is_file() and IMG.search(p.name)):
                 continue
-            lab = label_from_path(str(p))
+            lab = label_from_path(p.relative_to(src_dir))
             if lab is None:
                 continue
             rows.append(

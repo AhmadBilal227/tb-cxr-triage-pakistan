@@ -20,14 +20,15 @@ AHASH_THRESHOLD = 5
 
 def main() -> None:
     df = pd.read_csv(REPO / "data" / "index.csv")
-    seen_md5: set[str] = set()
+    seen_md5: dict[str, tuple[str, int]] = {}   # md5 -> (path, label)
     # Keep imagehash objects (not strings) so we can compute Hamming distance.
     # Near-dup detection is a one-time offline O(n·k) cost where k = kept images so far.
-    kept_ahashes: list[imagehash.ImageHash] = []
+    kept_ahashes: list[tuple[imagehash.ImageHash, str, int]] = []  # (hash, path, label)
     keep: list = []
     dropped = 0
     for _, r in df.iterrows():
         path = r["path"]
+        label = int(r["label"])
         full = path if str(path).startswith("/") else str(REPO / path)
         try:
             im = Image.open(full).convert("L").resize((256, 256))
@@ -36,13 +37,32 @@ def main() -> None:
         md5 = hashlib.md5(im.tobytes()).hexdigest()
         ah = imagehash.average_hash(im)
         # Drop if exact md5 match OR Hamming distance <= threshold vs any kept hash.
-        if md5 in seen_md5 or (
-            kept_ahashes and min(abs(ah - kh) for kh in kept_ahashes) <= AHASH_THRESHOLD
-        ):
+        is_md5_dup = md5 in seen_md5
+        near_match: tuple[imagehash.ImageHash, str, int] | None = None
+        if not is_md5_dup and kept_ahashes:
+            best = min(kept_ahashes, key=lambda t: abs(ah - t[0]))
+            if abs(ah - best[0]) <= AHASH_THRESHOLD:
+                near_match = best
+        if is_md5_dup or near_match is not None:
             dropped += 1
+            if is_md5_dup:
+                kept_path, kept_label = seen_md5[md5]
+                if label != kept_label:
+                    print(
+                        f"WARNING: label conflict (md5) kept={kept_path!r} label={kept_label}"
+                        f" vs dropped={path!r} label={label}"
+                    )
+            else:
+                assert near_match is not None
+                _, kept_path, kept_label = near_match
+                if label != kept_label:
+                    print(
+                        f"WARNING: label conflict (near-dup) kept={kept_path!r} label={kept_label}"
+                        f" vs dropped={path!r} label={label}"
+                    )
             continue
-        seen_md5.add(md5)
-        kept_ahashes.append(ah)
+        seen_md5[md5] = (path, label)
+        kept_ahashes.append((ah, path, label))
         keep.append(r)
     out = pd.DataFrame(keep)
     out.to_csv(REPO / "data" / "index_dedup.csv", index=False)
