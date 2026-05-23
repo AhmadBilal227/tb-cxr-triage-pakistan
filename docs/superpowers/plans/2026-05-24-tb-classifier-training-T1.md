@@ -91,23 +91,30 @@ Expected: `mps available: True`.
 - [ ] `training/build_index.py`: walk each `data/raw/<source>/` folder, infer label from folder/filename convention per source (Qatar: `Normal/` vs `Tuberculosis/`; Montgomery/Shenzhen: filename `*_0`=normal/`*_1`=TB; TBX11K: its CSV), infer `patient_id` (filename stem sans suffix; for sets without IDs use the filename). Emit `data/index.csv` with columns `path,label,source,patient_id`. Print per-source class counts.
 - [ ] `training/dedup.py`: for every image compute `average_hash` (near-dup) + md5 (exact); drop cross-source duplicates (keep first); emit `data/index_dedup.csv`. Print how many dups removed (expect overlap between Qatar and Montgomery/Shenzhen).
 
-### Task 3: Lung segmentation/crop + CLAHE preprocessing
+### Task 3: Lung SOFT-mask + CLAHE preprocessing
+*(reconciled with the panel + roadmap: soft-mask not hard-crop; pretrained seg not U-Net training)*
 
-- [ ] `training/preprocess.py`: a `preprocess(path) -> PIL.Image` that (1) loads grayscale, (2) applies **CLAHE** (`cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))`), (3) segments the lung field (use the `data/raw/lungseg` masks to train a small U-Net via `segmentation-models-pytorch`, OR use a pretrained lung-mask model; fall back to a center-crop if segmentation unavailable), (4) zeroes pixels outside the lung mask + crops to the lung bounding box, (5) returns RGB (3-ch replicate). This is shared by extraction, the ONNX preprocessing, and the eventual browser preprocessing — keep it bit-exact between train and inference.
-- [ ] Sanity-check: save 10 before/after thumbnails to `training/_debug/` and eyeball that lungs are isolated.
+- [ ] `training/preprocess.py`: `preprocess(path) -> PIL.Image` that (1) loads grayscale, (2) applies **CLAHE** (`clipLimit=2.0, tileGridSize=(8,8)`), (3) segments lungs with the **pretrained `xrv.baseline_models.chestx_det.PSPNet`** (no U-Net training; identify the Left/Right-Lung target channels), (4) **dilates the mask +15–20% and soft-attenuates outside it (NOT hard-zero), crops to a margined bbox that RETAINS hila, costophrenic angles, and apices**, (5) returns RGB. Fall back to a center-crop only if seg fails.
+- [ ] **Two preprocessing paths:** this CLAHE+soft-mask path feeds Rad-DINO (resize 518); TorchXRayVision uses **its own** normalization (`xrv.datasets.normalize`→[-1024,1024], 224, no CLAHE).
+- [ ] Sanity-check 10 thumbnails — acceptance criterion is "hila / CP-angles / apices retained", not just "lungs isolated".
 
-### Task 4: Feature extraction (Rad-DINO, MPS, cached)
+### Task 4: Feature extraction — dual-backbone fusion, cached
+*(reconciled: cache patch tokens + TXRV fusion, not CLS-only)*
 
-- [ ] `training/extract_features.py`: load `microsoft/rad-dino` + its `AutoImageProcessor` (resize 518, center-crop, mean 0.5307 std 0.2583), `device="mps"`, `eval()`, `requires_grad_(False)`. For each row in `index_dedup.csv`: `preprocess()` → processor → `model(**x).pooler_output` (768-d CLS). Batch (≤32). Cache to `data/features.npz` with arrays `X [N,768]`, `y [N]`, `source [N]`, `patient_id [N]`. Use `tqdm`. **One-time ~30–60 min on M4.**
-- [ ] Verify: `python -c "import numpy as np; d=np.load('data/features.npz', allow_pickle=True); print(d['X'].shape, d['y'].sum(), set(d['source']))"`.
+- [ ] `training/extract_features.py` (both backbones frozen, `eval()`, `requires_grad_(False)`, `device="mps"`). For each `index_dedup.csv` image cache:
+  - **Rad-DINO**: CLS `pooler_output` (768) **and** a downsampled patch-token set from `last_hidden_state[:,1:,:]` (drop CLS; adaptive-avg-pool the 37×37 grid → 8×8 = 64 tokens × 768, store **fp16** to fit disk) — enables the attention head.
+  - **TorchXRayVision** DenseNet on its own preprocessing: pooled features (1024) + the 18 pathology logits.
+  - Save `data/features.npz`: `cls [N,768]`, `patches [N,64,768] fp16`, `txrv [N,1042]`, `y`, `source`, `patient_id`. ~30–90 min one-time.
+- [ ] Verify shapes + class balance after the run.
 
-### Task 5: LODO evaluation + head training + threshold calibration
+### Task 5: Attention-pooled head + LODO + nested threshold
+*(reconciled: GLoRI/ABMIL head, nested threshold, frozen-threshold cross-source gate, no user-facing "latent")*
 
-- [ ] `training/train_tb.py`: define `Head` (`LayerNorm(768)→Dropout(0.3)→Linear(768,256)→GELU→Dropout(0.3)→Linear(256,1)`).
-  - **LODO loop** (honest scoreboard): for each `source` as held-out test, train the head on the other sources' cached features (`pos_weight` BCE for imbalance, AdamW lr 1e-3, ~60 epochs, early-stop on val AUPRC), evaluate on the held-out source. Print per-fold AUC + sensitivity@90%-spec-threshold and the resulting specificity.
-  - **Threshold for ≥90% sensitivity** via `roc_curve` on a validation split; save to `tb_threshold.json` (target 0.92 for CI headroom).
-  - **Final model**: retrain the head on **all** features; save `tb_head.pt`.
-  - Print the headline: mean LODO AUC, and "expected external sensitivity/specificity".
+- [ ] `training/train_tb.py`: head = **gated-attention (ABMIL) pooling over the 64 patch tokens** → concat with CLS (768) + TXRV (1042) → small MLP (LayerNorm/Dropout). Loss = **class-balanced + label smoothing (ε≤0.1)** with `pos_weight`. Multi-task heads (binary TB primary; activity 4-class where the 4th class is **"TB sequelae (old/healed)", INTERNAL-only — never surface "latent"**; pathology passthrough) trained jointly as regularizers.
+  - **LODO** (honest scoreboard): hold out one source at a time; **group the re-mix-overlapping sources (Qatar/Montgomery/Shenzhen/TBX11K overlaps) as one** so a fold is genuinely external. Within the training sources, carve a **train-only validation split** for early-stop AND threshold selection.
+  - **Gate metric:** realized **sensitivity at the FROZEN (train-derived) threshold on the held-out source**, with a **Clopper-Pearson CI** over the full held-out positives (≥~150). NEVER fit the threshold on the held-out fold.
+  - Report a **single-task vs multi-task** LODO AUC delta to substantiate (or drop) the multi-task claim.
+  - Final head on all data → `tb_head.pt`; threshold (labeled in-sample) → `tb_threshold.json`, to be re-fit per deployment site.
 
 ### Task 6: Anti-shortcut audits (gate before trusting the model)
 
