@@ -88,6 +88,8 @@ export interface Settings {
   models: OrchestrationModels;
   /** Whether the user accepted the research-only first-use modal. */
   acceptedDisclaimer: boolean;
+  /** Fitted calibration params, or null to use the hard-coded SCREENING_POLICY. */
+  calibration: CalibrationParams | null;
 }
 
 // ---------------------------------------------------------------------------

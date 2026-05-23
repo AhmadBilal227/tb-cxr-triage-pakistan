@@ -33,6 +33,7 @@ export const DEFAULT_SETTINGS: Settings = {
     textEmbedding: 'text-embedding-3-large',
   },
   acceptedDisclaimer: false,
+  calibration: null,
 };
 
 export const SETTINGS_STORAGE_KEY = 'tb-triage.settings.v1';

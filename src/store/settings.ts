@@ -39,6 +39,7 @@ function loadInitial(): Settings {
       ...parsed,
       overrides: { ...DEFAULT_SETTINGS.overrides, ...(parsed.overrides ?? {}) },
       models: { ...DEFAULT_SETTINGS.models, ...(parsed.models ?? {}) },
+      calibration: parsed.calibration ?? null,
     });
   } catch {
     return withEnvFallback(DEFAULT_SETTINGS);
@@ -82,6 +83,11 @@ export const settingsStore = {
   },
   setModels(patch: Partial<Settings['models']>): void {
     state = { ...state, models: { ...state.models, ...patch } };
+    persist();
+    emit();
+  },
+  setCalibration(calibration: Settings['calibration']): void {
+    state = { ...state, calibration };
     persist();
     emit();
   },
