@@ -1,0 +1,13 @@
+torch>=2.4
+torchvision>=0.19
+transformers>=4.44
+scikit-learn>=1.5
+scikit-image>=0.24
+opencv-python-headless>=4.10
+imagehash>=4.3
+pillow>=10.4
+pandas>=2.2
+numpy>=1.26
+onnx>=1.16
+onnxruntime>=1.19
+tqdm>=4.66
