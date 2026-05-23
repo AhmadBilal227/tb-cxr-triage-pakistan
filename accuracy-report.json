@@ -1,0 +1,310 @@
+{
+  "report": {
+    "generatedAt": "2026-05-23T19:09:56.477Z",
+    "config": "current system (GPT-5.5 quality+vision+adjudicator; HF CXR classifiers down on free tier; RAG empty corpus)",
+    "n_total": 30,
+    "n_decided": 19,
+    "n_abstain": 10,
+    "n_halted": 1,
+    "confusion": {
+      "tp": 1,
+      "fp": 0,
+      "tn": 12,
+      "fn": 6
+    },
+    "accuracy": 0.6842105263157895,
+    "sensitivity": 0.14285714285714285,
+    "specificity": 1,
+    "auc": 0.7642857142857142
+  },
+  "results": [
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "abstain",
+      "confidence": 72,
+      "score": 0.18000000000000005,
+      "vlmProb": 0.18000000000000005,
+      "autoAbstain": [
+        "confidence"
+      ]
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "tb",
+      "confidence": 78,
+      "score": 0.78,
+      "vlmProb": 0.78,
+      "autoAbstain": []
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "abstain",
+      "confidence": 55,
+      "score": 0.21999999999999997,
+      "vlmProb": 0.21999999999999997,
+      "autoAbstain": [
+        "confidence"
+      ]
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "no_tb",
+      "confidence": 78,
+      "score": 0.14,
+      "vlmProb": 0.14,
+      "autoAbstain": []
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "no_tb",
+      "confidence": 78,
+      "score": 0.14,
+      "vlmProb": 0.14,
+      "autoAbstain": []
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "no_tb",
+      "confidence": 78,
+      "score": 0.12,
+      "vlmProb": 0.12,
+      "autoAbstain": []
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "abstain",
+      "confidence": 70,
+      "score": 0.72,
+      "vlmProb": 0.72,
+      "autoAbstain": [
+        "confidence"
+      ]
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "abstain",
+      "confidence": 48,
+      "score": 0.28,
+      "vlmProb": 0.28,
+      "autoAbstain": [
+        "confidence"
+      ]
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "abstain",
+      "confidence": 74,
+      "score": 0.14,
+      "vlmProb": 0.14,
+      "autoAbstain": [
+        "confidence"
+      ]
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "abstain",
+      "confidence": 70,
+      "score": 0.18000000000000005,
+      "vlmProb": 0.18000000000000005,
+      "autoAbstain": [
+        "confidence"
+      ]
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "no_tb",
+      "confidence": 78,
+      "score": 0.09999999999999998,
+      "vlmProb": 0.09999999999999998,
+      "autoAbstain": []
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "abstain",
+      "confidence": 72,
+      "score": 0.21999999999999997,
+      "vlmProb": 0.21999999999999997,
+      "autoAbstain": [
+        "confidence"
+      ]
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "no_tb",
+      "confidence": 82,
+      "score": 0.12,
+      "vlmProb": 0.12,
+      "autoAbstain": []
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "no_tb",
+      "confidence": 78,
+      "score": 0.18000000000000005,
+      "vlmProb": 0.18000000000000005,
+      "autoAbstain": []
+    },
+    {
+      "truth": 1,
+      "halted": true,
+      "reason": "This is a lateral chest X-ray rather than a frontal PA/AP view, so it is not suitable for standard TB screening.",
+      "verdict": null,
+      "score": null
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "confidence": 78,
+      "score": 0.14,
+      "vlmProb": 0.14,
+      "autoAbstain": []
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "confidence": 82,
+      "score": 0.07999999999999996,
+      "vlmProb": 0.07999999999999996,
+      "autoAbstain": []
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "confidence": 78,
+      "score": 0.12,
+      "vlmProb": 0.12,
+      "autoAbstain": []
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "confidence": 82,
+      "score": 0.09999999999999998,
+      "vlmProb": 0.09999999999999998,
+      "autoAbstain": []
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "abstain",
+      "confidence": 72,
+      "score": 0.14,
+      "vlmProb": 0.14,
+      "autoAbstain": [
+        "confidence"
+      ]
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "confidence": 82,
+      "score": 0.07999999999999996,
+      "vlmProb": 0.07999999999999996,
+      "autoAbstain": []
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "confidence": 82,
+      "score": 0.07999999999999996,
+      "vlmProb": 0.07999999999999996,
+      "autoAbstain": []
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "confidence": 78,
+      "score": 0.10999999999999999,
+      "vlmProb": 0.10999999999999999,
+      "autoAbstain": []
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "abstain",
+      "confidence": 72,
+      "score": 0.21999999999999997,
+      "vlmProb": 0.21999999999999997,
+      "autoAbstain": [
+        "confidence"
+      ]
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "confidence": 78,
+      "score": 0.14,
+      "vlmProb": 0.14,
+      "autoAbstain": []
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "confidence": 78,
+      "score": 0.14,
+      "vlmProb": 0.14,
+      "autoAbstain": []
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "confidence": 78,
+      "score": 0.14,
+      "vlmProb": 0.14,
+      "autoAbstain": []
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "confidence": 78,
+      "score": 0.14,
+      "vlmProb": 0.14,
+      "autoAbstain": []
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "confidence": 78,
+      "score": 0.14,
+      "vlmProb": 0.14,
+      "autoAbstain": []
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "abstain",
+      "confidence": 72,
+      "score": 0.14,
+      "vlmProb": 0.14,
+      "autoAbstain": [
+        "confidence"
+      ]
+    }
+  ]
+}

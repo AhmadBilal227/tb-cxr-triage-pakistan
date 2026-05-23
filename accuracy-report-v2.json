@@ -1,0 +1,280 @@
+{
+  "policy": {
+    "tbFlag": 0.3,
+    "negClear": 0.15,
+    "maxClearUncertainty": 0.15
+  },
+  "K": 3,
+  "results": [
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.12666666666666668,
+      "uncertainty": 0.06599663291074444,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "tb",
+      "score": 0.8533333333333334,
+      "uncertainty": 0.024944382578492966,
+      "policyVerdict": "tb",
+      "modelVerdict": "tb"
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "tb",
+      "score": 0.15333333333333332,
+      "uncertainty": 0.04714045207910317,
+      "policyVerdict": "abstain",
+      "modelVerdict": "tb"
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "tb",
+      "score": 0.68,
+      "uncertainty": 0.043204937989385725,
+      "policyVerdict": "tb",
+      "modelVerdict": "tb"
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.09666666666666666,
+      "uncertainty": 0.016996731711975948,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "tb",
+      "score": 0.49333333333333335,
+      "uncertainty": 0.06599663291074442,
+      "policyVerdict": "tb",
+      "modelVerdict": "tb"
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "tb",
+      "score": 0.36333333333333334,
+      "uncertainty": 0.062360956446232345,
+      "policyVerdict": "tb",
+      "modelVerdict": "tb"
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.07333333333333333,
+      "uncertainty": 0.009428090415820637,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.12333333333333334,
+      "uncertainty": 0.02867441755680876,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "abstain",
+      "score": 0.18666666666666668,
+      "uncertainty": 0.01885618083164127,
+      "policyVerdict": "abstain",
+      "modelVerdict": "abstain"
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.13333333333333333,
+      "uncertainty": 0.01885618083164127,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "abstain",
+      "score": 0.18000000000000002,
+      "uncertainty": 0.04898979485566356,
+      "policyVerdict": "abstain",
+      "modelVerdict": "abstain"
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.07,
+      "uncertainty": 0.008164965809277263,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.10333333333333333,
+      "uncertainty": 0.01247219128924647,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.06666666666666667,
+      "uncertainty": 0.009428090415820635,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.08666666666666667,
+      "uncertainty": 0.009428090415820635,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 1,
+      "halted": false,
+      "verdict": "abstain",
+      "score": 0.21,
+      "uncertainty": 0.04242640687119285,
+      "policyVerdict": "abstain",
+      "modelVerdict": "abstain"
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.06666666666666667,
+      "uncertainty": 0.009428090415820635,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.036666666666666674,
+      "uncertainty": 0.004714045207910318,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.07,
+      "uncertainty": 0.008164965809277263,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "abstain",
+      "score": 0.10333333333333333,
+      "uncertainty": 0.016996731711975948,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "abstain"
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.05333333333333334,
+      "uncertainty": 0.009428090415820631,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.05333333333333334,
+      "uncertainty": 0.009428090415820631,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.12666666666666668,
+      "uncertainty": 0.009428090415820642,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.10999999999999999,
+      "uncertainty": 0.02943920288775949,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.09333333333333334,
+      "uncertainty": 0.018856180831641263,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.09000000000000001,
+      "uncertainty": 0.021602468994692862,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.11666666666666665,
+      "uncertainty": 0.028674417556808753,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "abstain",
+      "score": 0.16,
+      "uncertainty": 0.04898979485566356,
+      "policyVerdict": "abstain",
+      "modelVerdict": "abstain"
+    },
+    {
+      "truth": 0,
+      "halted": false,
+      "verdict": "no_tb",
+      "score": 0.12666666666666668,
+      "uncertainty": 0.04109609335312651,
+      "policyVerdict": "no_tb",
+      "modelVerdict": "no_tb"
+    }
+  ]
+}

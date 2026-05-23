@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TB Triage — Single-file demo (research only)</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: #0a0a0a; color: #fafaf7;
+        font-family: Inter, system-ui, sans-serif; font-size: 14px;
+      }
+      .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; }
+      header { background: rgba(245,158,11,.1); color: #f59e0b; text-align: center; padding: 6px; font-size: 12px; border-bottom: 1px solid rgba(245,158,11,.3); }
+      main { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      h1 { font-size: 18px; margin: 8px 0; }
+      .panel { border: 1px solid #2a2a2a; background: #141414; border-radius: 10px; padding: 14px; }
+      label { display: block; font-size: 11px; color: #8a8a85; margin: 8px 0 2px; }
+      input[type=text], input[type=password] {
+        width: 100%; background: #0a0a0a; border: 1px solid #2a2a2a; color: #fafaf7;
+        padding: 7px 9px; border-radius: 6px; font-family: "IBM Plex Mono", monospace; font-size: 12px;
+      }
+      button { background: #fafaf7; color: #0a0a0a; border: 0; padding: 8px 14px; border-radius: 6px; font-weight: 600; cursor: pointer; }
+      button:disabled { opacity: .5; cursor: default; }
+      #drop { border: 2px dashed #2a2a2a; border-radius: 10px; padding: 28px; text-align: center; color: #8a8a85; cursor: pointer; }
+      #drop.over { border-color: #6366f1; background: rgba(99,102,241,.06); }
+      img#preview { max-width: 100%; max-height: 320px; border-radius: 8px; border: 1px solid #2a2a2a; margin-top: 10px; }
+      .card { border: 1px solid #2a2a2a; border-radius: 8px; padding: 10px; margin-top: 8px; background: #1c1c1c; }
+      .badge { font-size: 10px; padding: 1px 6px; border-radius: 4px; font-family: monospace; text-transform: uppercase; }
+      .hf { background: rgba(0,117,74,.15); color: #00754a; }
+      .replicate { background: rgba(245,158,11,.15); color: #f59e0b; }
+      .openai { background: rgba(99,102,241,.15); color: #6366f1; }
+      .verdict { border-radius: 10px; padding: 16px; margin-top: 12px; font-size: 20px; font-weight: 700; }
+      pre { background: #0a0a0a; padding: 8px; border-radius: 6px; overflow: auto; max-height: 180px; }
+      .row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+      .warn { color: #f59e0b; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <header>Research preview. Not a medical device. Not for diagnostic use.</header>
+    <main>
+      <section>
+        <h1>TB Triage — single-file demo</h1>
+        <div class="panel">
+          <label>OpenAI API key (orchestration: quality, VLM, adjudicator)</label>
+          <input id="openaiKey" type="password" placeholder="sk-..." />
+          <label>Hugging Face token (primary perception)</label>
+          <input id="hfToken" type="password" placeholder="hf_..." />
+          <label>Replicate token (optional fallback)</label>
+          <input id="replicateToken" type="password" placeholder="r8_..." />
+          <label>TB classifier — HF model</label>
+          <input id="tbModel" type="text" value="Owos/tb-classifier" />
+          <label>TB classifier — Replicate version (optional)</label>
+          <input id="tbReplicateVersion" type="text" placeholder="version hash" />
+          <label>General CXR — HF model</label>
+          <input id="generalModel" type="text" value="keremberke/yolov8m-chest-xray-classification" />
+          <p class="warn">Keys are kept only in this page's localStorage. Any JS here can read them. Do not use production keys.</p>
+        </div>
+
+        <div class="panel" style="margin-top:12px">
+          <div id="drop">Drop a chest X-ray, or click to choose.</div>
+          <input id="file" type="file" accept="image/*" hidden />
+          <img id="preview" hidden alt="preview" />
+          <div style="margin-top:10px">
+            <button id="run" disabled>Run pipeline</button>
+          </div>
+          <p class="mono" style="color:#8a8a85;margin-top:8px">
+            Note: this single-file demo implements Stages 1, 2, and 4 (quality gate, perception
+            ensemble with HF→Replicate fallback, GPT-5.5 adjudication). Stage 3 retrieval is omitted
+            here because it needs a labeled corpus + IndexedDB; use the full app for RAG.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <h1>Agent trace</h1>
+        <div id="trace"></div>
+        <div id="verdict"></div>
+      </section>
+    </main>
+
+    <script>
+      // ---- persistence of BYOK fields ----
+      const FIELDS = ['openaiKey', 'hfToken', 'replicateToken', 'tbModel', 'tbReplicateVersion', 'generalModel'];
+      for (const id of FIELDS) {
+        const el = document.getElementById(id);
+        el.value = localStorage.getItem('demo.' + id) || el.value;
+        el.addEventListener('input', () => localStorage.setItem('demo.' + id, el.value));
+      }
+      const $ = (id) => document.getElementById(id);
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
+
+      let currentBlob = null;
+
+      // ---- drop / file handling ----
+      const drop = $('drop');
+      drop.addEventListener('click', () => $('file').click());
+      drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+      drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+      drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); handle(e.dataTransfer.files[0]); });
+      $('file').addEventListener('change', (e) => handle(e.target.files[0]));
+      function handle(f) {
+        if (!f || !f.type.startsWith('image/')) return;
+        currentBlob = f;
+        const url = URL.createObjectURL(f);
+        $('preview').src = url; $('preview').hidden = false;
+        $('run').disabled = false;
+      }
+
+      function blobToDataURL(blob) {
+        return new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => res(r.result);
+          r.onerror = () => rej(r.error);
+          r.readAsDataURL(blob);
+        });
+      }
+
+      function traceCard(title, status, provider, latency, body) {
+        const div = document.createElement('div');
+        div.className = 'card';
+        const badge = provider ? `<span class="badge ${provider}">${provider}</span>` : '';
+        const lat = latency != null ? `<span class="mono" style="color:#8a8a85">${Math.round(latency)}ms</span>` : '';
+        div.innerHTML = `<div class="row"><strong>${title}</strong><span>${badge} ${lat}</span></div>
+          <div class="mono" style="color:#8a8a85">${status}</div>${body || ''}`;
+        $('trace').appendChild(div);
+        return div;
+      }
+
+      // ---- Hugging Face with 503 cold-start retry (max 3, >20s budget => fail) ----
+      async function hfImage(token, model, blob) {
+        // HF retired api-inference.huggingface.co; serverless now lives on the router.
+        const url = 'https://router.huggingface.co/hf-inference/models/' + model;
+        const start = performance.now();
+        let totalWait = 0;
+        for (let attempt = 0; attempt <= 3; attempt++) {
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + token, Accept: 'application/json', 'Content-Type': blob.type || 'application/octet-stream' },
+            body: blob,
+          });
+          if (res.ok) return { raw: await res.json(), latency: performance.now() - start };
+          if (res.status === 503) {
+            const b = await res.json().catch(() => ({}));
+            const est = typeof b.estimated_time === 'number' ? b.estimated_time : 5;
+            const wait = est * 1000 + 1500;
+            if (attempt === 3 || totalWait + wait > 20000) throw new Error('HF cold start > 20s budget — falling back');
+            totalWait += wait;
+            await sleep(wait);
+            continue;
+          }
+          throw new Error('HF ' + res.status + ': ' + (await res.text()).slice(0, 120));
+        }
+        throw new Error('HF retries exhausted');
+      }
+
+      // ---- Replicate fallback: create + poll (60s budget) ----
+      async function replicate(token, version, blob) {
+        const dataUrl = await blobToDataURL(blob);
+        const start = performance.now();
+        let res = await fetch('https://api.replicate.com/v1/predictions', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ version, input: { image: dataUrl } }),
+        });
+        if (!res.ok) throw new Error('Replicate create ' + res.status);
+        let pred = await res.json();
+        let interval = 700;
+        while (pred.status === 'starting' || pred.status === 'processing') {
+          if (performance.now() - start > 60000) throw new Error('Replicate > 60s');
+          await sleep(interval);
+          interval = Math.min(interval * 1.6, 5000);
+          res = await fetch(pred.urls.get, { headers: { Authorization: 'Bearer ' + token } });
+          pred = await res.json();
+        }
+        if (pred.status !== 'succeeded') throw new Error('Replicate ' + pred.status);
+        return { raw: pred.output, latency: performance.now() - start };
+      }
+
+      function parseTbProb(raw) {
+        if (Array.isArray(raw)) {
+          const tb = raw.find((x) => x && /tub|tb|positive|abnormal|^1$/i.test(String(x.label)));
+          if (tb) return clamp(tb.score, 0, 1);
+          const neg = raw.find((x) => x && /normal|negative|^0$/i.test(String(x.label)));
+          if (neg) return clamp(1 - neg.score, 0, 1);
+          if (raw.length === 2) return clamp([...raw].sort((a, b) => b.score - a.score)[0].score, 0, 1);
+        }
+        if (typeof raw === 'number') return clamp(raw, 0, 1);
+        return 0;
+      }
+      function parseGeneralTb(raw) {
+        if (Array.isArray(raw)) {
+          const tb = raw.find((x) => x && /tubercul/i.test(String(x.label)));
+          if (tb) return clamp(tb.score, 0, 1);
+        }
+        return 0;
+      }
+
+      // ---- classifyWithFallback ----
+      async function classifyWithFallback(blob, model, version, deps, onFallback) {
+        try {
+          const r = await hfImage(deps.hfToken, model, blob);
+          return { tb_prob: clamp(deps.parse(r.raw), 0, 1), raw: r.raw, provider: 'hf', latency: r.latency };
+        } catch (err) {
+          if (!version || !deps.replicateToken) throw new Error(err.message + ' (no Replicate fallback configured)');
+          onFallback(err.message);
+          const r = await replicate(deps.replicateToken, version, blob);
+          return { tb_prob: clamp(deps.parse(r.raw), 0, 1), raw: r.raw, provider: 'replicate', latency: r.latency };
+        }
+      }
+
+      // ---- OpenAI Responses API (vision JSON) ----
+      async function openaiJSON(key, prompt, dataUrl) {
+        const models = ['gpt-5.5', 'gpt-5.5-instant'];
+        let lastErr;
+        for (const model of models) {
+          try {
+            const res = await fetch('https://api.openai.com/v1/responses', {
+              method: 'POST',
+              headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model,
+                input: [{ role: 'user', content: [
+                  { type: 'input_text', text: prompt },
+                  ...(dataUrl ? [{ type: 'input_image', image_url: dataUrl }] : []),
+                ] }],
+                text: { format: { type: 'json_object' } },
+              }),
+            });
+            if (!res.ok) throw new Error('OpenAI ' + res.status + ': ' + (await res.text()).slice(0, 120));
+            const j = await res.json();
+            let text = j.output_text || '';
+            if (!text) for (const o of j.output || []) for (const c of o.content || []) if (c.type === 'output_text') text += c.text;
+            const s = text.indexOf('{'), e = text.lastIndexOf('}');
+            return { data: JSON.parse(text.slice(s, e + 1)), model };
+          } catch (err) { lastErr = err; }
+        }
+        throw lastErr;
+      }
+
+      // ---- pipeline ----
+      $('run').addEventListener('click', run);
+      async function run() {
+        $('trace').innerHTML = '';
+        $('verdict').innerHTML = '';
+        $('run').disabled = true;
+        const openaiKey = $('openaiKey').value.trim();
+        const hfToken = $('hfToken').value.trim();
+        const replicateToken = $('replicateToken').value.trim();
+        const tbModel = $('tbModel').value.trim();
+        const tbVersion = $('tbReplicateVersion').value.trim();
+        const generalModel = $('generalModel').value.trim();
+        try {
+          if (!openaiKey) throw new Error('OpenAI key required');
+          if (!hfToken) throw new Error('HF token required');
+          const dataUrl = await blobToDataURL(currentBlob);
+
+          // Stage 1 — quality gate
+          const qc = traceCard('1 · Quality Gate', 'running…', 'openai');
+          const q = await openaiJSON(openaiKey,
+            'Is this a frontal chest X-ray suitable for TB screening? Reply JSON only: {is_cxr: bool, quality: "good"|"poor"|"unreadable", reason: string}',
+            dataUrl);
+          qc.innerHTML += `<pre class="mono">${JSON.stringify(q.data, null, 2)}</pre>`;
+          if (!q.data.is_cxr || q.data.quality === 'unreadable') {
+            showVerdict('UNCERTAIN — REFER', '#f59e0b', 'Halted by quality gate: ' + q.data.reason);
+            return;
+          }
+
+          // Stage 2 — ensemble
+          const deps = { hfToken, replicateToken };
+          const tbCard = traceCard('2A · TB Classifier (w0.5)', 'running…');
+          const genCard = traceCard('2B · General CXR (w0.2)', 'running…');
+          const vlmCard = traceCard('2C · GPT-5.5 Vision (w0.3)', 'running…', 'openai');
+
+          const [tb, gen, vlm] = await Promise.all([
+            classifyWithFallback(currentBlob, tbModel, tbVersion, { ...deps, parse: parseTbProb },
+              (m) => (tbCard.innerHTML += `<div class="replicate badge">→ Replicate: ${m}</div>`))
+              .then((r) => { tbCard.innerHTML += render(r); return { ...r, weight: 0.5 }; })
+              .catch((e) => { tbCard.innerHTML += err(e); return null; }),
+            classifyWithFallback(currentBlob, generalModel, '', { ...deps, parse: parseGeneralTb }, () => {})
+              .then((r) => { genCard.innerHTML += render(r); return { ...r, weight: 0.2 }; })
+              .catch((e) => { genCard.innerHTML += err(e); return null; }),
+            openaiJSON(openaiKey,
+              'Are TB-associated findings (upper-zone consolidation, cavitation, miliary nodules, hilar lymphadenopathy) present? Respond JSON: {tb_likely: bool, findings: string[], confidence: 0..1}',
+              dataUrl)
+              .then((r) => {
+                const p = r.data.tb_likely ? r.data.confidence : 1 - r.data.confidence;
+                vlmCard.innerHTML += `<pre class="mono">${JSON.stringify(r.data, null, 2)}</pre>`;
+                return { tb_prob: clamp(p, 0, 1), weight: 0.3, provider: 'openai' };
+              })
+              .catch((e) => { vlmCard.innerHTML += err(e); return null; }),
+          ]);
+
+          const members = [tb, gen, vlm].filter(Boolean);
+          const probs = members.map((m) => m.tb_prob);
+          const tw = members.reduce((a, m) => a + m.weight, 0) || 1;
+          const weighted = members.reduce((a, m) => a + m.weight * m.tb_prob, 0) / tw;
+          const mean = probs.reduce((a, b) => a + b, 0) / (probs.length || 1);
+          const std = Math.sqrt(probs.reduce((a, b) => a + (b - mean) ** 2, 0) / (probs.length || 1));
+          const disagreement = probs.length ? Math.max(...probs) - Math.min(...probs) : 0;
+          const replicateFallbacks = members.filter((m) => m.provider === 'replicate').length;
+          traceCard('Ensemble vote', `weighted ${weighted.toFixed(3)} · std ${std.toFixed(3)} · disagreement ${disagreement.toFixed(3)} · replicate fallbacks ${replicateFallbacks}`);
+
+          // Stage 4 — adjudicator
+          const adjCard = traceCard('4 · Adjudicator (GPT-5.5)', 'running…', 'openai');
+          const adj = await openaiJSON(openaiKey,
+            'You are a cautious TB triage adjudicator. Given the query CXR and these signals, decide.\n' +
+            'ensemble members: ' + JSON.stringify(members.map((m) => ({ tb_prob: m.tb_prob, provider: m.provider }))) + '\n' +
+            'weighted score: ' + weighted.toFixed(3) + ', std: ' + std.toFixed(3) + ', disagreement: ' + disagreement.toFixed(3) + '\n' +
+            'replicate fallbacks: ' + replicateFallbacks + '\n' +
+            'Respond JSON only: {verdict: "tb"|"no_tb"|"abstain", confidence: 0-100, rationale: string, abstain_reason?: string}',
+            dataUrl);
+          adjCard.innerHTML += `<pre class="mono">${JSON.stringify(adj.data, null, 2)}</pre>`;
+
+          // deterministic guardrails
+          const reasons = [];
+          if (adj.data.confidence < 75) reasons.push('confidence < 75');
+          if (std > 0.2) reasons.push('ensemble std > 0.2');
+          if (replicateFallbacks >= 2) reasons.push('>=2 Replicate fallbacks (degraded)');
+          const verdict = reasons.length ? 'abstain' : adj.data.verdict;
+          const color = verdict === 'tb' ? '#c8102e' : verdict === 'no_tb' ? '#00754a' : '#f59e0b';
+          const label = verdict === 'tb' ? 'TB SUSPECTED' : verdict === 'no_tb' ? 'NO TB' : 'UNCERTAIN — REFER';
+          showVerdict(label, color,
+            adj.data.rationale + (reasons.length ? ' [auto-abstain: ' + reasons.join('; ') + ']' : ''),
+            adj.data.confidence);
+        } catch (e) {
+          showVerdict('ERROR', '#c8102e', e.message);
+        } finally {
+          $('run').disabled = false;
+        }
+      }
+
+      function render(r) { return `<div class="row"><span class="badge ${r.provider}">${r.provider}</span><span class="mono">tb_prob ${r.tb_prob.toFixed(3)} · ${Math.round(r.latency)}ms</span></div>`; }
+      function err(e) { return `<div style="color:#c8102e" class="mono">${e.message}</div>`; }
+      function showVerdict(label, color, rationale, conf) {
+        $('verdict').innerHTML = `<div class="verdict" style="color:${color};border:1px solid ${color}66">
+          ${label}${conf != null ? ` · ${conf}` : ''}
+          <div style="font-size:13px;font-weight:400;color:#fafaf7;margin-top:6px">${rationale}</div></div>`;
+      }
+    </script>
+  </body>
+</html>

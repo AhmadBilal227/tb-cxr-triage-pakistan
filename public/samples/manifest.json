@@ -1,0 +1,30 @@
+[
+  {
+    "file": "tb-sample-1.jpg",
+    "label": 1,
+    "labelText": "TB",
+    "source": "darthPanda/combined-unknown-pneumonia-and-tuberculosis (TUBERCULOSIS class)",
+    "note": "Research/educational use only. Real CXR from a public Hugging Face dataset."
+  },
+  {
+    "file": "tb-sample-2.jpg",
+    "label": 1,
+    "labelText": "TB",
+    "source": "darthPanda/combined-unknown-pneumonia-and-tuberculosis (TUBERCULOSIS class)",
+    "note": "Research/educational use only. Real CXR from a public Hugging Face dataset."
+  },
+  {
+    "file": "normal-sample-1.jpg",
+    "label": 0,
+    "labelText": "NORMAL",
+    "source": "keremberke/chest-xray-classification (NORMAL class)",
+    "note": "Research/educational use only. Real CXR from a public Hugging Face dataset."
+  },
+  {
+    "file": "normal-sample-2.jpg",
+    "label": 0,
+    "labelText": "NORMAL",
+    "source": "keremberke/chest-xray-classification (NORMAL class)",
+    "note": "Research/educational use only. Real CXR from a public Hugging Face dataset."
+  }
+]

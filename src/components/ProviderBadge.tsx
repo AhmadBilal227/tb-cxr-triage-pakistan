@@ -1,0 +1,33 @@
+import type { Provider } from '@/lib/types';
+import { cn } from '@/lib/utils';
+
+const LABELS: Record<Provider, string> = { hf: 'HF', replicate: 'Replicate', openai: 'OpenAI' };
+
+// Fills/borders keep the brand color; text uses brighter on-dark variants so 10px
+// badge text clears WCAG AA (4.5:1) on the dark surface.
+const STYLES: Record<Provider, string> = {
+  hf: 'bg-provider-hf/15 text-[#4ADE80] border-provider-hf/50',
+  replicate: 'bg-provider-replicate/15 text-[#FBBF24] border-provider-replicate/50',
+  openai: 'bg-provider-openai/15 text-[#A5B4FC] border-provider-openai/50',
+};
+
+/** Provider badge surfaced on every result card so fallback is always visible. */
+export function ProviderBadge({ provider }: { provider: Provider | null }): JSX.Element {
+  if (!provider) {
+    return (
+      <span className="inline-flex items-center rounded border border-border px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wide text-muted">
+        none
+      </span>
+    );
+  }
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wide',
+        STYLES[provider],
+      )}
+    >
+      {LABELS[provider]}
+    </span>
+  );
+}

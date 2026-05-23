@@ -1,0 +1,19 @@
+# Minimal Cog config to publish a TB chest-X-ray CNN as a Replicate model,
+# usable as the per-stage FALLBACK for the TB classifier in this app.
+#
+# Build + push:
+#   pip install cog
+#   cog build -t my-tb-classifier
+#   cog push r8.im/<your-username>/tb-classifier
+#
+# Then paste the resulting slug + version hash into Settings →
+# "TB Classifier — Replicate slug" / "…version hash".
+build:
+  gpu: false
+  python_version: "3.11"
+  python_packages:
+    - "torch==2.2.2"
+    - "torchvision==0.17.2"
+    - "pillow==10.3.0"
+    - "numpy==1.26.4"
+predict: "predict.py:Predictor"
