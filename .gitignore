@@ -15,3 +15,6 @@ data/
 *.onnx
 features.npy
 
+# Python bytecode cache
+__pycache__/
+

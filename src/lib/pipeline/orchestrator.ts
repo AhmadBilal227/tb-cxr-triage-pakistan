@@ -77,7 +77,7 @@ function screeningPolicy(
 
 /** Take the more cautious (higher-severity) verdict: tb > abstain > no_tb. */
 function mostCautious(...verdicts: Verdict[]): Verdict {
-  return FROM_SEVERITY[Math.max(...verdicts.map((v) => SEVERITY[v]))] as Verdict;
+  return FROM_SEVERITY[Math.max(...verdicts.map((v) => SEVERITY[v] ?? 1))] ?? 'abstain';
 }
 
 /** Deterministic guardrails. Returns the reasons an abstain is forced (empty => allowed to stand). */
@@ -410,6 +410,10 @@ export async function runPipeline(
       stream.text.slice(stream.text.indexOf('{'), stream.text.lastIndexOf('}') + 1),
     ) as AdjudicationRaw;
 
+    const VALID_VERDICTS: Verdict[] = ['tb', 'no_tb', 'abstain'];
+    const modelVerdict: Verdict = VALID_VERDICTS.includes(parsed.verdict) ? parsed.verdict : 'abstain';
+    const modelConfidence = Number.isFinite(parsed.confidence) ? clamp(parsed.confidence, 0, 100) : 0;
+
     // Safety-net combine: screening policy (calibrated, sensitivity-first) + deterministic
     // guardrails + the model's own verdict — take the MOST CAUTIOUS. The model and policy
     // can escalate; neither can clear a flagged case. (tb > abstain > no_tb)
@@ -424,33 +428,33 @@ export async function runPipeline(
         ? applyCalibration(vlmRaw, cal.perModel.vlm)
         : vlmRaw;
     const policy = screeningPolicy(ensemble.weightedScore, vlmProbForPolicy, vlmUncertainty, cal);
-    const guardrailReasons = evaluateAbstainRules(parsed.confidence, ensemble, rag);
+    const guardrailReasons = evaluateAbstainRules(modelConfidence, ensemble, rag);
 
     const finalVerdict = mostCautious(
       policy.verdict,
-      parsed.verdict,
+      modelVerdict,
       guardrailReasons.length > 0 ? 'abstain' : 'no_tb',
     );
     const reasons = [
       ...(policy.verdict !== 'no_tb' && policy.reason ? [policy.reason] : []),
       ...guardrailReasons,
     ];
-    const escalated = finalVerdict !== parsed.verdict;
+    const escalated = finalVerdict !== modelVerdict;
     adjudication = {
       verdict: finalVerdict,
-      confidence: clamp(parsed.confidence, 0, 100),
+      confidence: modelConfidence,
       rationale: escalated
-        ? `[Safety net: ${parsed.verdict} → ${finalVerdict}] ${parsed.rationale}`
+        ? `[Safety net: ${modelVerdict} → ${finalVerdict}] ${parsed.rationale}`
         : parsed.rationale,
       abstain_reason:
         finalVerdict === 'abstain'
           ? `Refer: ${reasons.join('; ') || 'weak or uncertain evidence'}.`
           : parsed.abstain_reason,
-      auto_abstained: finalVerdict === 'abstain' && parsed.verdict !== 'abstain',
+      auto_abstained: finalVerdict === 'abstain' && modelVerdict !== 'abstain',
       auto_abstain_reasons: reasons,
       screening: {
         policyVerdict: policy.verdict,
-        modelVerdict: parsed.verdict,
+        modelVerdict: modelVerdict,
         fusedProb: ensemble.weightedScore,
         vlmProb: vlmProbForPolicy,
         vlmUncertainty,

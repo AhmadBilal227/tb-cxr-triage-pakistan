@@ -1,5 +1,6 @@
 import { clamp } from './utils';
 import type { MemberCalibration, EnsembleMemberId, CalibrationParams, CalibrationSample } from './types';
+import { ENSEMBLE_WEIGHTS } from '@/lib/defaults';
 
 const EPS = 1e-6;
 
@@ -237,7 +238,7 @@ export function fitCalibration(
     const fit = fitFusionWeights(X, y);
     fusion = { mode: 'fitted', weights: fit.weights, bias: fit.bias };
   } else {
-    fusion = { mode: 'fixed', weights: { tb: 0.7, general: 0.1, vlm: 0.2 }, bias: 0 };
+    fusion = { mode: 'fixed', weights: { ...ENSEMBLE_WEIGHTS }, bias: 0 };
   }
 
   // 3. Fused score per sample -> conformal thresholds.

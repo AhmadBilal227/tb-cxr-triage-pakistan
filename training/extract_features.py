@@ -30,7 +30,7 @@ def main() -> None:
     idx_path = DATA / "index_dedup.csv"
     if not idx_path.exists():
         raise SystemExit(f"missing {idx_path} — run build_index.py + dedup.py first")
-    df = pd.read_csv(idx_path)
+    df = pd.read_csv(idx_path).reset_index(drop=True)
     print(f"device={DEVICE}  images={len(df)}")
 
     proc = AutoImageProcessor.from_pretrained(MODEL_ID)
