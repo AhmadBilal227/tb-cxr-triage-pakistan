@@ -46,11 +46,12 @@ def main() -> None:
     import torchxrayvision as xrv
 
     proc = AutoImageProcessor.from_pretrained(RAD_ID)
-    rad = AutoModel.from_pretrained(RAD_ID).to(DEVICE).eval()
-    dm = xrv.models.DenseNet(weights="densenet121-res224-all").to(DEVICE).eval()
+    rad = AutoModel.from_pretrained(RAD_ID).to(DEVICE).eval()  # heavy ViT -> GPU (MPS)
+    dm = xrv.models.DenseNet(weights="densenet121-res224-all").eval()  # light DenseNet -> CPU (concurrent)
     for m in (rad, dm):
         for p in m.parameters():
             p.requires_grad_(False)
+    torch.set_num_threads(max(2, (torch.get_num_threads() or 8)))  # let the CPU DenseNet use cores
     xcrop, xresize = xrv.datasets.XRayCenterCrop(), xrv.datasets.XRayResizer(224)
     seg, lung_idx = _get_seg()
     if seg is not None:
@@ -94,6 +95,14 @@ def main() -> None:
             out.append(Image.fromarray(cv2.cvtColor(soft, cv2.COLOR_GRAY2RGB)))
         return out
 
+    @torch.no_grad()
+    def txrv_cpu(txrv_list: list[np.ndarray]) -> np.ndarray:
+        """Runs on CPU (in a worker thread) concurrently with the GPU Rad-DINO/seg."""
+        tx = torch.from_numpy(np.stack(txrv_list))  # [b,1,224,224] on CPU
+        feats = F.relu(dm.features(tx))
+        pooled = F.adaptive_avg_pool2d(feats, (1, 1)).flatten(1)
+        return torch.cat([pooled, dm(tx)], dim=1).numpy()  # [b,1042]
+
     cls_l: list[np.ndarray] = []
     tok_l: list[np.ndarray] = []
     txv_l: list[np.ndarray] = []
@@ -112,6 +121,9 @@ def main() -> None:
                     ok_rows.append(i)
             if not ok_rows:
                 continue
+            # CPU+GPU overlap: TorchXRayVision (light DenseNet) runs on CPU in a worker thread
+            # concurrently with the heavy Rad-DINO + lung-seg on the GPU (torch releases the GIL).
+            fut_txrv = ex.submit(txrv_cpu, list(txrv_list))
             with torch.no_grad():
                 rgbs = seg_crop(clahe_list)
                 rin = proc(images=rgbs, return_tensors="pt").to(DEVICE)
@@ -125,10 +137,7 @@ def main() -> None:
                 patches = F.adaptive_avg_pool2d(grid, (PATCH_GRID, PATCH_GRID))
                 patches = patches.reshape(grid.shape[0], grid.shape[1], PATCH_GRID ** 2).transpose(1, 2)
                 patches = patches.numpy().astype("float16")  # [b,64,768]
-                tx = torch.from_numpy(np.stack(txrv_list)).to(DEVICE)
-                feats = F.relu(dm.features(tx))
-                pooled = F.adaptive_avg_pool2d(feats, (1, 1)).flatten(1)
-                txv = torch.cat([pooled, dm(tx)], dim=1).float().cpu().numpy()  # [b,1042]
+            txv = fut_txrv.result()  # [b,1042] — computed on CPU in parallel with the GPU work
             for j, i in enumerate(ok_rows):
                 cls_l.append(cls[j])
                 tok_l.append(patches[j])
