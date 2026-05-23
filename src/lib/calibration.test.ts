@@ -4,6 +4,8 @@ import { fitTemperature, applyCalibration } from './calibration';
 import { fitPlatt } from './calibration';
 import { fuseLogOdds, effectiveWeights, fitFusionWeights } from './calibration';
 import { fitConformalThresholds } from './calibration';
+import { fitCalibration } from './calibration';
+import type { CalibrationSample } from './types';
 
 describe('math primitives', () => {
   it('sigmoid(logit(p)) round-trips', () => {
@@ -102,5 +104,24 @@ describe('conformal thresholds', () => {
     const r = fitConformalThresholds([0.1, 0.2, 0.3], [0, 0, 0]);
     expect(r.tauLow).toBe(0);
     expect(r.incomplete).toBe(true);
+  });
+});
+
+describe('fitCalibration', () => {
+  it('produces fitted params from samples with both classes', () => {
+    const samples: CalibrationSample[] = [];
+    for (let i = 0; i < 60; i++) {
+      const y = (i % 2) as 0 | 1;
+      samples.push({
+        filename: `f${i}`,
+        label: y,
+        memberProbs: { tb: y === 1 ? 0.75 : 0.2, vlm: y === 1 ? 0.7 : 0.25 },
+        vlmUncertainty: 0.05,
+      });
+    }
+    const p = fitCalibration(samples);
+    expect(p.source).toBe('fitted');
+    expect(p.conformal.tauHigh).toBeGreaterThanOrEqual(p.conformal.tauLow);
+    expect(p.perModel.tb).toBeDefined();
   });
 });

@@ -103,6 +103,32 @@ export interface MemberCalibration {
   nllCal: number;
 }
 
+export interface CalibrationParams {
+  version: 1;
+  fittedAt: number;
+  nSamples: number;
+  source: 'fitted' | 'default';
+  perModel: Partial<Record<EnsembleMemberId, MemberCalibration>>;
+  fusion: { mode: 'fixed' | 'fitted'; weights: Record<EnsembleMemberId, number>; bias: number };
+  conformal: {
+    tauLow: number;
+    tauHigh: number;
+    alphaSens: number;
+    gammaSpec: number;
+    nPos: number;
+    nNeg: number;
+    incomplete: boolean;
+  };
+  vlmSafetyThreshold: number;
+}
+
+export interface CalibrationSample {
+  filename: string;
+  label: 0 | 1;
+  memberProbs: Partial<Record<EnsembleMemberId, number>>;
+  vlmUncertainty: number | null;
+}
+
 // ---------------------------------------------------------------------------
 // Pipeline stage status + events (drives the live Agent Trace panel)
 // ---------------------------------------------------------------------------

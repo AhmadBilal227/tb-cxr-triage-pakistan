@@ -1,5 +1,5 @@
 import { clamp } from './utils';
-import type { MemberCalibration, EnsembleMemberId } from './types';
+import type { MemberCalibration, EnsembleMemberId, CalibrationParams, CalibrationSample } from './types';
 
 const EPS = 1e-6;
 
@@ -187,4 +187,99 @@ export function fitConformalThresholds(
   tauLow = clamp(tauLow, 0, 1);
   tauHigh = clamp(tauHigh, 0, 1);
   return { tauLow, tauHigh, nPos, nNeg, incomplete: nPos < cfg.minPerClass || nNeg < cfg.minPerClass };
+}
+
+const MEMBER_IDS: EnsembleMemberId[] = ['tb', 'general', 'vlm'];
+
+export function fitCalibration(
+  samples: CalibrationSample[],
+  cfg = { alphaSens: 0.92, gammaSpec: 0.1 },
+): CalibrationParams {
+  // 1. Per-member calibration (temperature default; Platt if it clearly wins and N>=100).
+  const perModel: Partial<Record<EnsembleMemberId, MemberCalibration>> = {};
+  for (const id of MEMBER_IDS) {
+    const rows = samples.filter((s) => typeof s.memberProbs[id] === 'number');
+    if (rows.length < 10) continue;
+    const probs = rows.map((s) => s.memberProbs[id] as number);
+    const labels = rows.map((s) => s.label);
+    const T = fitTemperature(probs, labels);
+    const tempCal: MemberCalibration = { method: 'temperature', T, A: 1, B: 0, nllRaw: 0, nllCal: 0 };
+    tempCal.nllRaw = calibratedNLL(probs, labels, { method: 'temperature', T: 1, A: 1, B: 0, nllRaw: 0, nllCal: 0 });
+    tempCal.nllCal = calibratedNLL(probs, labels, tempCal);
+    let chosen = tempCal;
+    if (rows.length >= 100) {
+      const { A, B } = fitPlatt(probs, labels);
+      const plattCal: MemberCalibration = { method: 'platt', T: 1, A, B, nllRaw: tempCal.nllRaw, nllCal: 0 };
+      plattCal.nllCal = calibratedNLL(probs, labels, plattCal);
+      if (plattCal.nllCal < tempCal.nllCal - 0.01) chosen = plattCal;
+    }
+    perModel[id] = chosen;
+  }
+
+  const calProb = (s: CalibrationSample, id: EnsembleMemberId): number | null => {
+    const raw = s.memberProbs[id];
+    if (typeof raw !== 'number') return null;
+    const c = perModel[id];
+    return c ? applyCalibration(raw, c) : raw;
+  };
+
+  // 2. Fusion weights: fitted LR if enough data, else fixed.
+  const nPos = samples.filter((s) => s.label === 1).length;
+  const nNeg = samples.length - nPos;
+  let fusion: CalibrationParams['fusion'];
+  const enoughForLR = samples.length >= 50 && nPos >= 10 && nNeg >= 10;
+  if (enoughForLR) {
+    const X = samples.map((s) => MEMBER_IDS.map((id) => logit(calProb(s, id) ?? 0.5)));
+    const y = samples.map((s) => s.label);
+    const fit = fitFusionWeights(X, y);
+    fusion = { mode: 'fitted', weights: fit.weights, bias: fit.bias };
+  } else {
+    fusion = { mode: 'fixed', weights: { tb: 0.7, general: 0.1, vlm: 0.2 }, bias: 0 };
+  }
+
+  // 3. Fused score per sample -> conformal thresholds.
+  const fusedScores = samples.map((s) => {
+    const present = MEMBER_IDS.filter((id) => calProb(s, id) !== null);
+    const w = effectiveWeights(present, fusion.weights, fusion.mode);
+    return fuseLogOdds(
+      present.map((id) => ({ id, prob: calProb(s, id) as number })),
+      w,
+      fusion.mode === 'fitted' ? fusion.bias : 0,
+    );
+  });
+  const conf = fitConformalThresholds(fusedScores, samples.map((s) => s.label), {
+    alphaSens: cfg.alphaSens,
+    gammaSpec: cfg.gammaSpec,
+    minPerClass: 20,
+  });
+
+  // 4. VLM safety threshold = (1-alpha) quantile of calibrated VLM prob among positives.
+  const vlmPos = samples
+    .filter((s) => s.label === 1 && calProb(s, 'vlm') !== null)
+    .map((s) => calProb(s, 'vlm') as number)
+    .sort((a, b) => a - b);
+  let vlmSafetyThreshold = 0.5;
+  if (vlmPos.length >= 20) {
+    const k = Math.floor((1 - cfg.alphaSens) * (vlmPos.length + 1));
+    vlmSafetyThreshold = k <= 0 ? (vlmPos[0] ?? 0.5) : (vlmPos[k - 1] ?? 0.5);
+  }
+
+  return {
+    version: 1,
+    fittedAt: Date.now(),
+    nSamples: samples.length,
+    source: 'fitted',
+    perModel,
+    fusion,
+    conformal: {
+      tauLow: conf.tauLow,
+      tauHigh: conf.tauHigh,
+      alphaSens: cfg.alphaSens,
+      gammaSpec: cfg.gammaSpec,
+      nPos: conf.nPos,
+      nNeg: conf.nNeg,
+      incomplete: conf.incomplete,
+    },
+    vlmSafetyThreshold,
+  };
 }
