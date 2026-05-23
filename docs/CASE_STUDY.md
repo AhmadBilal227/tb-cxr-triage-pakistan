@@ -99,6 +99,16 @@ The discipline that matters most here is the **anti-shortcut protocol**: cross-s
 
 ---
 
+## Milestone 8 — Verification pass: two reviewers, and the fail-open that mattered (2026-05-24)
+
+Before building further I ran a deliberate QA pass — a code-review agent across the whole codebase, then an **independent GPT-5.5 review** as a second opinion. The agent verified the core math and caught two real bugs: a calibrated-vs-raw probability mismatch in the VLM safety threshold, and a degenerate evaluation split. Then GPT caught the one the agent missed, and it was the one that mattered most: **if every perception model failed at once, the legacy fused score defaulted to 0, and the system would return a confident "NO TB"** — a fail-open on total perception failure, the worst possible direction for a screen.
+
+I fixed it so zero perception signal can never clear a patient (forced abstain), hardened the adjudicator to coerce malformed verdicts/confidence to a safe abstain, added terminal stage statuses so the UI can't hang on an errored stage, and tightened several training-script robustness points. Everything re-verified: strict build clean, 11/11 tests green, Python compiles and imports.
+
+**Lesson:** two independent reviewers with different blind spots beat one — and in safety-critical code, the bug that matters is usually the **fail-open you didn't think to test for**. I didn't have a test for "all models down at once"; GPT reasoned about it from the code. That's now a guarded path.
+
+---
+
 ## What this project demonstrates (for the portfolio reader)
 
 - **Honest ML evaluation.** I measured real sensitivity/specificity/AUC against ground truth and led with the uncomfortable number (14%), then improved it methodically and re-measured. No cherry-picked accuracy.
@@ -116,3 +126,4 @@ The discipline that matters most here is the **anti-shortcut protocol**: cross-s
 
 - **2026-05-23** — Built the full frontend app (Milestone 1); Lighthouse a11y 100.
 - **2026-05-24** — Live integration + real-data findings (M2); measured 14% baseline sensitivity (M3); VLM improvements → 42% (M4); 90%-path research swarms (M5); calibration core shipped via subagent-driven review gates (M6); started the real-classifier training pipeline, expanded to multi-task best-quality (M7).
+- **2026-05-24** — Verification/hardening pass (M8): agent + GPT-5.5 dual review. Fixed a fail-open (empty-ensemble → "NO TB"), verdict/confidence coercion, UI-stuck stage statuses, and training-script robustness. Build + 11/11 tests green.
