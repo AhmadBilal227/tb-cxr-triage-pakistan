@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { logit, sigmoid, clampProb } from './calibration';
 import { fitTemperature, applyCalibration } from './calibration';
 import { fitPlatt } from './calibration';
+import { fuseLogOdds, effectiveWeights, fitFusionWeights } from './calibration';
 
 describe('math primitives', () => {
   it('sigmoid(logit(p)) round-trips', () => {
@@ -53,5 +54,31 @@ describe('platt scaling', () => {
     const { A, B } = fitPlatt(probs, labels);
     expect(Number.isFinite(A)).toBe(true);
     expect(Number.isFinite(B)).toBe(true);
+  });
+});
+
+describe('log-odds fusion', () => {
+  it('single renormalized member is identity', () => {
+    const w = effectiveWeights(['vlm'], { tb: 0.7, general: 0.1, vlm: 0.2 }, 'fixed');
+    expect(w.vlm).toBeCloseTo(1, 6);
+    const fused = fuseLogOdds([{ id: 'vlm', prob: 0.83 }], w, 0);
+    expect(fused).toBeCloseTo(0.83, 5);
+  });
+  it('two agreeing-high members push fused above each', () => {
+    const w = effectiveWeights(['tb', 'vlm'], { tb: 1, general: 1, vlm: 1 }, 'fitted');
+    const fused = fuseLogOdds([{ id: 'tb', prob: 0.7 }, { id: 'vlm', prob: 0.7 }], w, 0);
+    expect(fused).toBeGreaterThan(0.7);
+  });
+  it('fitFusionWeights learns to separate', () => {
+    const X: number[][] = [];
+    const y: (0 | 1)[] = [];
+    for (let i = 0; i < 200; i++) {
+      const label = (i % 2) as 0 | 1;
+      const lt = logit(label === 1 ? 0.8 : 0.2);
+      X.push([lt, 0, lt]); // tb + vlm informative, general absent (0)
+      y.push(label);
+    }
+    const { weights } = fitFusionWeights(X, y);
+    expect(weights.tb).toBeGreaterThan(0);
   });
 });

@@ -1,5 +1,5 @@
 import { clamp } from './utils';
-import type { MemberCalibration } from './types';
+import type { MemberCalibration, EnsembleMemberId } from './types';
 
 const EPS = 1e-6;
 
@@ -103,4 +103,53 @@ export function fitPlatt(
     B -= (lr * gB) / n;
   }
   return { A, B };
+}
+
+export function fuseLogOdds(
+  members: { id: EnsembleMemberId; prob: number }[],
+  weights: Record<EnsembleMemberId, number>,
+  bias = 0,
+): number {
+  if (members.length === 0) return 0.5;
+  let z = bias;
+  for (const m of members) z += (weights[m.id] ?? 0) * logit(m.prob);
+  return sigmoid(z);
+}
+
+export function effectiveWeights(
+  present: EnsembleMemberId[],
+  weights: Record<EnsembleMemberId, number>,
+  mode: 'fixed' | 'fitted',
+): Record<EnsembleMemberId, number> {
+  if (mode === 'fitted') return weights; // keep magnitudes + bias
+  const sum = present.reduce((a, id) => a + (weights[id] ?? 0), 0) || 1;
+  const out = { tb: 0, general: 0, vlm: 0 } as Record<EnsembleMemberId, number>;
+  for (const id of present) out[id] = (weights[id] ?? 0) / sum;
+  return out;
+}
+
+export function fitFusionWeights(
+  X: number[][], // rows of [logit(p̂_tb), logit(p̂_general), logit(p̂_vlm)]; absent member -> 0
+  y: (0 | 1)[],
+  opts = { iters: 3000, lr: 0.05, l2: 1e-2 },
+): { weights: Record<EnsembleMemberId, number>; bias: number } {
+  const d = 3;
+  const w = new Array<number>(d).fill(0);
+  let b = 0;
+  const n = X.length;
+  for (let t = 0; t < opts.iters; t++) {
+    const gw = new Array<number>(d).fill(0);
+    let gb = 0;
+    for (let i = 0; i < n; i++) {
+      const row = X[i] ?? [0, 0, 0];
+      let z = b;
+      for (let j = 0; j < d; j++) z += (w[j] ?? 0) * (row[j] ?? 0);
+      const e = sigmoid(z) - (y[i] ?? 0);
+      for (let j = 0; j < d; j++) gw[j] = (gw[j] ?? 0) + e * (row[j] ?? 0);
+      gb += e;
+    }
+    for (let j = 0; j < d; j++) w[j] = (w[j] ?? 0) - opts.lr * ((gw[j] ?? 0) / n + opts.l2 * (w[j] ?? 0));
+    b -= (opts.lr * gb) / n;
+  }
+  return { weights: { tb: w[0] ?? 0, general: w[1] ?? 0, vlm: w[2] ?? 0 }, bias: b };
 }
