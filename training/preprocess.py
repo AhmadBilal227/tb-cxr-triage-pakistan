@@ -34,7 +34,10 @@ def _get_seg():
 
         m = xrv.baseline_models.chestx_det.PSPNet().eval()
         targets = [str(t).lower() for t in m.targets]
-        idx = [i for i, t in enumerate(targets) if "lung" in t]
+        # Keep lungs + hila + mediastinum (TB-relevant; radiologist note) so the soft-mask
+        # does not suppress hilar/mediastinal lymphadenopathy, a key primary/pediatric-TB sign.
+        keep = ("lung", "hilus", "mediastinum")
+        idx = [i for i, t in enumerate(targets) if any(k in t for k in keep)]
         _SEG, _LUNG_IDX = (m, idx) if idx else (None, None)
     except Exception:
         _SEG, _LUNG_IDX = None, None
