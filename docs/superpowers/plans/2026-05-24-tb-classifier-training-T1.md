@@ -179,3 +179,16 @@ These three were initially logged as caveats; they are actually fixable, and the
 - **Multi-task raises AUC (was: unproven) → FIX: run the ablation.** Train single-task (binary head only) vs multi-task (binary + activity/pathology/localization heads) on the *same cached features* under LODO; report both AUCs. Claim the lift only as the measured delta; keep the heads for explainability regardless. Near-free (heads train in seconds). Folded into `train_tb`/`train_multitask`.
 
 - **n=30 eval / PPV (was: insufficient) → FIX: it was a paid-VLM cost cap, not a real limit.** The trained CNN evaluates for free per image, so evaluate on the **full held-out source** (≥150 TB positives per LODO fold from TBX11K/Shenzhen/Qatar) and report Clopper-Pearson CIs. Add the prevalence→PPV/NPV→confirmatory-tests-per-case panel to `/validate`. No sample-size compromise once off the paid VLM path.
+
+### Geographic diversity + data provenance (regional dataset audit, 2026-05-24)
+A regional audit found **hidden re-mix leakage in the current mix** and the diversity sources worth pursuing.
+
+**Re-mix leakage (correct the LODO):**
+- **Qatar is a re-mix** of NIAID/Belarus (~3k) + Montgomery + RSNA — it already contains Belarus/NIAID images.
+- **TBX11K is a re-mix** of DA+DB (India, NITRD) + Montgomery + Shenzhen — it already contains the Indian DA/DB images.
+- So our 4 "sources" ≈ 3 primary (Montgomery, Shenzhen, India-DA/DB) + a Belarus slice, mutually overlapping → LODO is partly in-distribution. **Rule:** treat overlapping sources as ONE LODO group; pHash+embedding dedup ACROSS all sources; do **NOT** add DA/DB (leaks TBX11K) or a standalone Belarus set (leaks Qatar); avoid generic Kaggle "TB CXR" sets (re-mixes).
+
+**Diversity sources to pursue (geographic + HIV-endemic gap):**
+- **Training diversity:** TB Portals (NIAID) minus its Belarus subset (E. Europe/Central Asia/DR-TB + some India/Nigeria; bacteriological+genomic; CC0/DUA); **India National TB Prevalence Survey / IN-CXR (ICMR-NIRT)** (genuine Indian community pop, independent of DA/DB — but verify whether the public release is radiographic-only or micro-linked).
+- **Culture-confirmed validation:** TB Portals confirmed cases + outreach for HIV-endemic African NAAT-confirmed data (CIDRZ Zambia, Sibanye South Africa, TREATS) — access-restricted, validation-only; the populations the model is currently blind to.
+- **Avoid:** Pakistan Mendeley set (undocumented labels — weak training at most, never validation), standalone Belarus (leaks Qatar), DA/DB (leaks TBX11K), generic Kaggle re-mixes.
