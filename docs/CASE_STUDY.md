@@ -6,7 +6,7 @@
 
 ## TL;DR
 
-I built a frontend-only, bring-your-own-key TB chest X-ray triage app — a five-stage AI pipeline (quality gate → perception ensemble → retrieval → adjudication → verdict) wired to Hugging Face, Replicate, and OpenAI directly from the browser. Then I did the unglamorous part most demos skip: I **measured it against ground truth**, found it caught only ~14% of TB cases, and spent the rest of the project honestly closing that gap — improving the vision-language reasoning to ~42% sensitivity, building a calibration layer that can *guarantee* a sensitivity target, and standing up an offline training pipeline for a real, validated TB classifier. The throughline is intellectual honesty: at every step I reported the real numbers and the real limitations rather than the demo-friendly ones.
+I built a frontend-only, bring-your-own-key TB chest X-ray triage app — a five-stage AI pipeline (quality gate → perception ensemble → retrieval → adjudication → verdict) wired to Hugging Face, Replicate, and OpenAI directly from the browser. Then I did the unglamorous part most demos skip: I **measured it against ground truth**, found it caught only ~14% of TB cases, and spent the rest of the project honestly closing that gap — improving the vision-language reasoning to ~42% sensitivity, building a calibration layer that sets a sensitivity-targeted operating point (with the honest caveat — surfaced by an expert panel — that its coverage is in-distribution and must be re-fit per deployment site), and standing up an offline training pipeline for a real, validated TB classifier. The throughline is intellectual honesty: at every step I reported the real numbers and the real limitations rather than the demo-friendly ones.
 
 ---
 
@@ -109,6 +109,19 @@ I fixed it so zero perception signal can never clear a patient (forced abstain),
 
 ---
 
+## Milestone 9 — An expert panel red-teams the science (2026-05-24)
+
+After the code was verified, I convened a six-lens validation panel — ML methodologist, thoracic radiologist, TB epidemiologist/patient advocate, a two-way steelman, a literature-evidence agent, and a red-team auditor — to validate the *science*, not the code. The convergence across independent perspectives was the valuable part, and it was humbling in the right way:
+
+- The literature lens **confirmed the architecture** (frozen Rad-DINO probe, leave-one-dataset-out, threshold calibration, lung-segmentation) is evidence-supported, and that my expected ~0.80–0.88 LODO AUC sits in the *same band as commercial CAD4TB/qXR/Lunit on external data*. The engineering bet is sound.
+- But three or more agents independently flagged the same overclaims: the conformal "≥90% sensitivity guarantee" **doesn't survive deployment shift** (it's an in-distribution, fit-on-same-data, small-N guarantee); "active vs latent TB" from one film is **radiologically incoherent** (latent TB is defined by a *normal* radiograph); my labels are **radiographic, not bacteriological**, so I can't map them to the WHO bar; and a 30-image eval can't support a 90% claim (you need ~150+ positives). The public-health lens added the number I'd omitted: at 1% prevalence, 90/70 means ~3% PPV and ~33 confirmatory tests per case found.
+
+I folded every correction into the plan — softened the guarantee language to "calibrated operating point, re-fit per site, reported with CIs," relabeled the incoherent class, mandated reporting against radiographic labels, switched lung-cropping to a dilated soft-mask that preserves hila/pleura/apices, hardened the dedup + leave-one-dataset-out against cross-source patient leakage, and rewrote the ship-gate around the one experiment that actually predicts deployment (realized sensitivity at a *frozen* threshold on a held-out site).
+
+**Lesson:** my code was correct; my *claims* were ahead of my evidence. A panel of adversarial domain experts caught the gap between "the math runs" and "the math means what I said it means." For anything that touches a clinical decision, that gap is the whole game — and the fix wasn't more model, it was more honesty.
+
+---
+
 ## What this project demonstrates (for the portfolio reader)
 
 - **Honest ML evaluation.** I measured real sensitivity/specificity/AUC against ground truth and led with the uncomfortable number (14%), then improved it methodically and re-measured. No cherry-picked accuracy.
@@ -127,3 +140,4 @@ I fixed it so zero perception signal can never clear a patient (forced abstain),
 - **2026-05-23** — Built the full frontend app (Milestone 1); Lighthouse a11y 100.
 - **2026-05-24** — Live integration + real-data findings (M2); measured 14% baseline sensitivity (M3); VLM improvements → 42% (M4); 90%-path research swarms (M5); calibration core shipped via subagent-driven review gates (M6); started the real-classifier training pipeline, expanded to multi-task best-quality (M7).
 - **2026-05-24** — Verification/hardening pass (M8): agent + GPT-5.5 dual review. Fixed a fail-open (empty-ensemble → "NO TB"), verdict/confidence coercion, UI-stuck stage statuses, and training-script robustness. Build + 11/11 tests green.
+- **2026-05-24** — Expert-panel science validation (M9): 6-lens review (methodologist/radiologist/epidemiologist/steelman/literature/red-team). Architecture validated against literature; corrected overclaims — conformal guarantee → in-distribution + re-fit-per-site; dropped user-facing "latent TB" class; radiographic ≠ bacteriological labels; added PPV-at-prevalence honesty; soft-mask preprocessing; dedup/LODO leakage hardening. Plan + ship-gate rewritten.

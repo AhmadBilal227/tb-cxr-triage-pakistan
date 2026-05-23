@@ -2,9 +2,9 @@
 
 > **For agentic workers:** This is an offline Python data-science pipeline (runs on the user's Apple M4, not the browser app). Steps are concrete commands + code. Reviewable per-task; not unit-TDD-shaped like the app code.
 
-**Goal:** Train a real, generalization-validated TB chest-X-ray classifier and export it to ONNX for the in-browser perception slot (`ensemble.tb`), targeting the WHO triage bar (sensitivity ≥90% / specificity ≥70%).
+**Goal:** Train a best-quality, generalization-validated **multi-task** chest-X-ray perception model and export it to ONNX for the in-browser perception slot. Primary output is a calibrated TB probability (`ensemble.tb`, targeting WHO triage: sensitivity ≥90% / specificity ≥70%), plus richer outputs: TB activity subtype, pathology multi-label, lesion localization, and uncertainty.
 
-**Architecture:** Frozen `microsoft/rad-dino` (ViT-B, MIT) as a feature extractor (inference only — no backbone training), with a small trained MLP head. Features are extracted **once** and cached, so head training/iteration is instant. Honest performance measured by **leave-one-dataset-out (LODO)**; the shipped model is trained on all open data; a later phase fine-tunes the head on the user's own in-domain data.
+**Architecture:** **Feature fusion of two frozen experts** — `microsoft/rad-dino` (ViT-B, MIT, self-supervised on 838k CXRs → 768-d CLS) ⊕ `torchxrayvision` DenseNet121 (supervised multi-pathology, pretrained → 1024-d + 18 logits) — concatenated (~1.8k-d), feeding **small multi-task heads**: (1) TB activity 4-class (TBX11K: healthy/sick-non-TB/active-TB/latent-TB), (2) binary TB probability (primary), (3) pathology multi-label (TorchXRayVision passthrough), (4) lesion localization (Rad-DINO patch grid, box-supervised on TBX11K). Both backbones are **frozen** (inference only); features cached once → heads train in seconds. Multi-task supervision regularizes the primary TB head and forces pathology-grounded (not site-shortcut) features. Honest performance by **leave-one-dataset-out (LODO)** per head; shipped model trained on all open data; later phase fine-tunes on the user's own in-domain data. Calibration + Mondrian (class-conditional) conformal + TTA + log-odds ensemble on top.
 
 **Tech Stack:** Python 3.11 (via `uv`), PyTorch + MPS (Apple Metal) backend, `transformers` (Rad-DINO), `torchxrayvision` (baseline + lung utils), `segmentation-models-pytorch`/U-Net or a pretrained lung-mask model, `scikit-learn`, `scikit-image`, `imagehash`, `opencv` (CLAHE), `pytorch-grad-cam`, `onnx`/`onnxruntime`.
 
@@ -140,3 +140,33 @@ Expected: `mps available: True`.
 
 ## Biggest risk
 Site/shortcut bias inflating LODO-adjacent numbers. The audit gate (Task 6) is mandatory, not optional — a model that looks great in-distribution but fails the site-leak/Grad-CAM checks must not ship.
+
+---
+
+## Expert-panel validation — corrections to claims & method (2026-05-24)
+
+A six-lens validation panel (ML methodologist, radiologist, TB epidemiologist/patient advocate, steelman, literature, red-team) reviewed this plan. Consensus: the architecture is evidence-supported and the honesty discipline (LODO, audits, calibration) is real, but several **claims are not earned as written** and several **methodology gaps let the model pass its own gate while still shortcut-driven.** The literature lens independently confirmed our expected LODO AUC band (~0.80–0.88) matches commercial CAD external numbers — so the engineering is sound; the claims and gate must be corrected. The following SUPERSEDE the optimistic language above.
+
+### Claims honesty (correct the wording everywhere)
+- **Conformal does NOT "guarantee ≥90% sensitivity."** Its coverage holds only under exchangeability, which cross-site/population deployment shift breaks; fitting calibration+fusion+conformal on one set is also circular, and at ~20 positives the band is high-variance. Reframe as: *"a calibrated operating point with in-distribution, finite-sample coverage that MUST be re-fit on labeled data from each deployment site, reported with a binomial CI."* The honest sensitivity mechanism is empirical per-site threshold + CI, not the conformal guarantee.
+- **Metrics are against RADIOGRAPHIC/program labels, not bacteriological confirmation.** The WHO TPP bar is defined against culture/NAAT. Never map our radiographic-label sensitivity onto WHO 90/70 without a microbiologically-confirmed test set. State this in the model card and every reported number.
+- **WHO 90/70 is the TPP *minimum* (optimal 95/80), not a target.** State the honest LODO band next to the goal; at 90% sensitivity expect external specificity ~55–70% (matches commercial CAD), not both-high.
+- **Multi-task "raises primary AUC" is unproven** — present it as regularization/anti-shortcut, and only claim an AUC lift if a single-task-vs-multi-task LODO ablation shows it.
+- **Sample size:** no ≥90% sensitivity claim without ≥~150 held-out TB positives (≥250 for ±5%); report AUC (tighter CIs) as primary until then.
+
+### Clinical corrections
+- **Drop the user-facing "active vs latent" output.** Latent TB is radiographically silent by definition; TBX11K's "latent" = old/healed sequelae. Relabel the 4th class **"TB sequelae (old/healed)"**, keep the 4-class head INTERNAL-only (regularizer), never surface "latent" to a user.
+- **Don't hard-crop to a tight lung bbox** — it amputates hilar/mediastinal lymphadenopathy, pleural effusion, and apical extent (all TB-relevant, several are our own targets). Use a **dilated/soft mask (+15–20%) on an anatomical frame** (retain hila, costophrenic angles, apices), or a 2-channel image+mask input. Verify apices/CP-angles retained in the debug check, not just "lungs isolated."
+- **Finding vocabulary:** remove **tree-in-bud** (a CT sign, not CXR); add primary-vs-post-primary pattern cue; explicitly note HIV/pediatric TB is often lower-zone/adenopathy-predominant/normal-film so those don't falsely lower TB probability.
+- **Hard-gate pediatric (<15y) out of scope** (WHO does not endorse CAD there); name **HIV, pediatric, prior-TB scarring, field-equipment** as known failure populations in the model card.
+
+### Method corrections (the eventual code must satisfy these)
+- **Collapse Qatar + Montgomery + Shenzhen overlaps:** Qatar aggregates NLM, so treat overlapping sources as ONE LODO group; dedup with **pHash + embedding-NN (cosine on Rad-DINO features)**, threshold chosen on a labeled dup/non-dup set, not a fixed aHash-5. Reconcile patient identity from each dataset's manifest; where absent, state that "patient-level" split is actually image-level.
+- **Nested threshold:** in each LODO fold, pick the operating threshold on a **train-only validation split**, never on the held-out test fold (current `train_tb.py` fits it on the test fold → optimistic specificity).
+- **Add the highest-value experiment to the gate:** fit conformal/threshold on sources {A,B}, then report **realized sensitivity at that FROZEN threshold on held-out source C** (rotate). If it swings across folds, exchangeability is violated and the "guarantee" is void — this is the number that predicts deployment.
+- **Reframe the site-leak canary as diagnostic, not pass/fail** (Rad-DINO will separate sites ~1.0 regardless). Gate instead on: LODO AUC surviving lung-masking + frozen-threshold cross-source sensitivity + site-swap/CLAHE-match counterfactual probability stability.
+- **Labels from official manifests, not path substrings** (`build_index.py` heuristics can mislabel); assert per-source counts equal published totals.
+- **Report at deployment prevalence:** add a prevalence → PPV/NPV → confirmatory-tests-per-case panel to `/validate`; never quote accuracy/PPV on balanced sets.
+
+### Revised success gate (replaces the earlier one)
+Ship to `ensemble.tb` only if: (1) **frozen-threshold cross-source (LODO) sensitivity** holds with a binomial CI lower bound ≥85% on ≥~150 positives; (2) LODO AUC survives lung-masking; (3) site-swap counterfactual probability is stable; (4) Grad-CAM on-lung; (5) all numbers stated against radiographic labels with the PPV-at-prevalence panel; (6) "research preview, not a medical device," pediatric hard-gated, failure populations named. The conformal band is re-fit per deployment site (Phase B), never trusted from open-data calibration alone.

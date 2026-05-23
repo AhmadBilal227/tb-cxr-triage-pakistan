@@ -6,6 +6,7 @@ called directly from the browser: Hugging Face (primary perception), Replicate (
 
 ## Non-negotiable ethos (carry this into every change)
 - **Report real numbers.** Measure against ground truth (the `/validate` route + `scripts/accuracy-test*.mjs`). Lead with the honest metric (sensitivity is the safety-critical one for a screen), never a flattering one. The project's whole identity is intellectual honesty about model quality.
+- **Don't overclaim (per the M9 expert panel — see CASE_STUDY.md).** The conformal layer does NOT "guarantee ≥90% sensitivity": its coverage is in-distribution + finite-sample and must be re-fit on labeled data from each deployment site, reported with a binomial CI. Open-dataset metrics are against **radiographic** labels, not bacteriological confirmation — say so. WHO 90/70 is a **floor**, not a target. No ≥90% sensitivity claim without ~150+ held-out TB positives. Don't surface "active vs latent TB" from a single film (latent TB is radiographically silent). Report PPV at deployment prevalence, not accuracy on balanced sets.
 - **Fallback and degradation are always visible** to the user, never hidden.
 - **The deterministic safety net wraps the LLM** — the model advises, guardrails decide; it can escalate but never clear a flagged case on weak evidence.
 - Keep strict TS clean (`npm run build`), tests green (`npm test`), and a11y ≥95.
