@@ -47,6 +47,7 @@ function goldenSectionMin(
 }
 
 function meanNLL(z: number[], labels: (0 | 1)[], transform: (zi: number) => number): number {
+  if (z.length === 0) return 0;
   let s = 0;
   for (let i = 0; i < z.length; i++) {
     const p = clampProb(transform(z[i] ?? 0));
@@ -80,6 +81,7 @@ export function fitPlatt(
   iters = 2000,
   lr = 0.1,
 ): { A: number; B: number } {
+  if (probs.length === 0) return { A: 1, B: 0 };
   const z = probs.map(logit);
   const n = z.length;
   // Prior-corrected targets for small samples (Platt 1999 / King-Zeng).
@@ -133,6 +135,7 @@ export function fitFusionWeights(
   y: (0 | 1)[],
   opts = { iters: 3000, lr: 0.05, l2: 1e-2 },
 ): { weights: Record<EnsembleMemberId, number>; bias: number } {
+  if (X.length === 0) return { weights: { tb: 0, general: 0, vlm: 0 }, bias: 0 };
   const d = 3;
   const w = new Array<number>(d).fill(0);
   let b = 0;

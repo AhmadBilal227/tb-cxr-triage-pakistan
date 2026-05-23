@@ -44,19 +44,20 @@ describe('temperature scaling', () => {
 });
 
 describe('platt scaling', () => {
-  it('fits a shift on biased data (B != 0)', () => {
+  it('recovers a downward shift (B < 0) on upward-biased data', () => {
+    // Deterministic (no RNG): balanced labels, but BOTH classes report probs
+    // biased upward (pos 0.7, neg 0.6). A calibrator should pull the logits
+    // down toward the true base rate, i.e. recover B < 0.
     const probs: number[] = [];
     const labels: (0 | 1)[] = [];
     for (let i = 0; i < 300; i++) {
-      const y = (Math.random() < 0.5 ? 1 : 0) as 0 | 1;
-      // systematically biased high: add +1.0 to the logit regardless of label sometimes
-      const base = y === 1 ? 0.7 : 0.4; // both shifted up -> needs negative B
-      probs.push(base);
+      const y = (i % 2) as 0 | 1;
+      probs.push(y === 1 ? 0.7 : 0.6);
       labels.push(y);
     }
     const { A, B } = fitPlatt(probs, labels);
     expect(Number.isFinite(A)).toBe(true);
-    expect(Number.isFinite(B)).toBe(true);
+    expect(B).toBeLessThan(0); // downward correction
   });
 });
 
@@ -87,7 +88,7 @@ describe('log-odds fusion', () => {
 });
 
 describe('conformal thresholds', () => {
-  it('tauLow guarantees >=90% sensitivity on the calibration set', () => {
+  it('tauLow guarantees >=92% sensitivity on the calibration set', () => {
     // 100 positives with scores spread 0.2..0.95, 100 negatives 0.05..0.6
     const scores: number[] = [];
     const labels: (0 | 1)[] = [];
@@ -97,7 +98,7 @@ describe('conformal thresholds', () => {
       alphaSens: 0.92, gammaSpec: 0.1, minPerClass: 20,
     });
     const caught = labels.filter((y, i) => y === 1 && (scores[i] ?? 0) >= tauLow).length;
-    expect(caught / 100).toBeGreaterThanOrEqual(0.9);
+    expect(caught / 100).toBeGreaterThanOrEqual(0.92);
     expect(tauHigh).toBeGreaterThanOrEqual(tauLow); // never inverted
   });
   it('no positives -> tauLow 0 and incomplete', () => {
