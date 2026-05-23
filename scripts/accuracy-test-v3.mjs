@@ -237,15 +237,14 @@ const run = async () => {
   console.log(`    Baseline policy: ${JSON.stringify(POLICY)}\n`);
 
   // Fetch the combined set (same offsets as v2 for reproducibility)
-  const tbRows = (await rows(8500, N + 4)).filter((r) => r.label === 2 && r.img).slice(0, N).map((r) => ({ ...r, truth: 1 }));
-  const normRows = (await rows(300, N + 8)).filter((r) => r.label === 0 && r.img).slice(0, N).map((r) => ({ ...r, truth: 0 }));
+  const tb = (await rows(8500, N + 4)).filter((r) => r.label === 2 && r.img).slice(0, N).map((r) => ({ ...r, truth: 1, origClass: 'TB' }));
+  const norm = (await rows(300, N + 8)).filter((r) => r.label === 0 && r.img).slice(0, N).map((r) => ({ ...r, truth: 0, origClass: 'NORMAL' }));
 
-  // Interleave TB and NORMAL so index parity splits each class evenly
-  const allItems = [];
-  for (let i = 0; i < Math.max(tbRows.length, normRows.length); i++) {
-    if (i < tbRows.length) allItems.push({ ...tbRows[i], origClass: 'TB' });
-    if (i < normRows.length) allItems.push({ ...normRows[i], origClass: 'NORMAL' });
-  }
+  // STRATIFIED split: split EACH class by its own index parity so both halves
+  // contain both classes. Even within-class index -> calibration, odd -> test.
+  // Tag each item with its half (CAL/TST) BEFORE running.
+  const tagHalves = (arr) => arr.map((item, i) => ({ ...item, half: i % 2 === 0 ? 'CAL' : 'TST' }));
+  const allItems = [...tagHalves(tb), ...tagHalves(norm)];
 
   // Run pipeline on ALL images
   const rawResults = new Array(allItems.length).fill(null);
@@ -258,28 +257,32 @@ const run = async () => {
       try {
         const bytes = await get(item.img);
         const r = await runOne(bytes);
-        rawResults[idx] = { truth: item.truth, origClass: item.origClass, splitIdx: idx, ...r };
+        rawResults[idx] = { truth: item.truth, origClass: item.origClass, half: item.half, ...r };
         done++;
         process.stdout.write(
-          `  [${done}/${allItems.length}] ${item.truth ? 'TB ' : 'NEG'} (${idx % 2 === 0 ? 'CAL' : 'TST'}) -> ${r.halted ? 'HALT' : `p=${r.score?.toFixed(3) ?? '-'}`}\n`,
+          `  [${done}/${allItems.length}] ${item.truth ? 'TB ' : 'NEG'} (${item.half}) -> ${r.halted ? 'HALT' : `p=${r.score?.toFixed(3) ?? '-'}`}\n`,
         );
       } catch (e) {
-        rawResults[idx] = { truth: item.truth, origClass: item.origClass, splitIdx: idx, halted: true, verdict: null, score: null };
+        rawResults[idx] = { truth: item.truth, origClass: item.origClass, half: item.half, halted: true, verdict: null, score: null };
         done++;
         process.stdout.write(
-          `  [${done}/${allItems.length}] ${item.truth ? 'TB' : 'NEG'} (${idx % 2 === 0 ? 'CAL' : 'TST'}) -> ERR ${e.message.slice(0, 50)}\n`,
+          `  [${done}/${allItems.length}] ${item.truth ? 'TB' : 'NEG'} (${item.half}) -> ERR ${e.message.slice(0, 50)}\n`,
         );
       }
     }
   }
   await Promise.all(Array.from({ length: 4 }, worker));
 
-  // Split by index parity
-  const calItems = rawResults.filter((r, i) => i % 2 === 0 && r != null && !r.halted && r.score != null);
-  const tstItems = rawResults.filter((r, i) => i % 2 !== 0 && r != null);
+  // Split by the per-class half tag assigned before running (stratified).
+  const calItems = rawResults.filter((r) => r != null && r.half === 'CAL' && !r.halted && r.score != null);
+  const tstItems = rawResults.filter((r) => r != null && r.half === 'TST');
 
-  console.log(`\nCalibration half: ${calItems.length} scored items`);
-  console.log(`Test half: ${tstItems.length} items`);
+  const calTb = calItems.filter((r) => r.truth === 1).length;
+  const calNeg = calItems.filter((r) => r.truth === 0).length;
+  const tstTb = tstItems.filter((r) => r.truth === 1).length;
+  const tstNeg = tstItems.filter((r) => r.truth === 0).length;
+  console.log(`\nCalibration half: ${calItems.length} scored items (TB=${calTb} NEG=${calNeg})`);
+  console.log(`Test half: ${tstItems.length} items (TB=${tstTb} NEG=${tstNeg})`);
 
   // Fit conformal thresholds on the calibration half
   const calScores = calItems.map((r) => r.score);
