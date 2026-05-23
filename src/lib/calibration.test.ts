@@ -3,6 +3,7 @@ import { logit, sigmoid, clampProb } from './calibration';
 import { fitTemperature, applyCalibration } from './calibration';
 import { fitPlatt } from './calibration';
 import { fuseLogOdds, effectiveWeights, fitFusionWeights } from './calibration';
+import { fitConformalThresholds } from './calibration';
 
 describe('math primitives', () => {
   it('sigmoid(logit(p)) round-trips', () => {
@@ -80,5 +81,26 @@ describe('log-odds fusion', () => {
     }
     const { weights } = fitFusionWeights(X, y);
     expect(weights.tb).toBeGreaterThan(0);
+  });
+});
+
+describe('conformal thresholds', () => {
+  it('tauLow guarantees >=90% sensitivity on the calibration set', () => {
+    // 100 positives with scores spread 0.2..0.95, 100 negatives 0.05..0.6
+    const scores: number[] = [];
+    const labels: (0 | 1)[] = [];
+    for (let i = 0; i < 100; i++) { scores.push(0.2 + 0.0075 * i); labels.push(1); }
+    for (let i = 0; i < 100; i++) { scores.push(0.05 + 0.0055 * i); labels.push(0); }
+    const { tauLow, tauHigh } = fitConformalThresholds(scores, labels, {
+      alphaSens: 0.92, gammaSpec: 0.1, minPerClass: 20,
+    });
+    const caught = labels.filter((y, i) => y === 1 && (scores[i] ?? 0) >= tauLow).length;
+    expect(caught / 100).toBeGreaterThanOrEqual(0.9);
+    expect(tauHigh).toBeGreaterThanOrEqual(tauLow); // never inverted
+  });
+  it('no positives -> tauLow 0 and incomplete', () => {
+    const r = fitConformalThresholds([0.1, 0.2, 0.3], [0, 0, 0]);
+    expect(r.tauLow).toBe(0);
+    expect(r.incomplete).toBe(true);
   });
 });

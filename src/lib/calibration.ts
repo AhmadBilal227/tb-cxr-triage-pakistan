@@ -153,3 +153,38 @@ export function fitFusionWeights(
   }
   return { weights: { tb: w[0] ?? 0, general: w[1] ?? 0, vlm: w[2] ?? 0 }, bias: b };
 }
+
+export interface ConformalResult {
+  tauLow: number;
+  tauHigh: number;
+  nPos: number;
+  nNeg: number;
+  incomplete: boolean;
+}
+
+export function fitConformalThresholds(
+  scores: number[],
+  labels: (0 | 1)[],
+  cfg = { alphaSens: 0.92, gammaSpec: 0.1, minPerClass: 20 },
+): ConformalResult {
+  const pos = scores.filter((_, i) => labels[i] === 1).sort((a, b) => a - b);
+  const neg = scores.filter((_, i) => labels[i] === 0).sort((a, b) => a - b);
+  const nPos = pos.length;
+  const nNeg = neg.length;
+  const beta = 1 - cfg.alphaSens;
+
+  let tauLow = 0;
+  if (nPos > 0) {
+    const k = Math.floor(beta * (nPos + 1));
+    tauLow = k <= 0 ? 0 : (pos[k - 1] ?? 0);
+  }
+  let tauHigh = 1;
+  if (nNeg > 0) {
+    const m = Math.floor(cfg.gammaSpec * (nNeg + 1));
+    tauHigh = m <= 0 ? 1 : (neg[nNeg - m] ?? 1);
+  }
+  tauHigh = Math.max(tauHigh, tauLow); // never invert the band
+  tauLow = clamp(tauLow, 0, 1);
+  tauHigh = clamp(tauHigh, 0, 1);
+  return { tauLow, tauHigh, nPos, nNeg, incomplete: nPos < cfg.minPerClass || nNeg < cfg.minPerClass };
+}
