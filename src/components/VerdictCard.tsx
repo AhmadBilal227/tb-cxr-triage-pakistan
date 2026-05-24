@@ -55,6 +55,12 @@ export function VerdictCard({
           radiographic TB screen · not a diagnosis · confirm bacteriologically
         </div>
       </div>
+      {adjudication.verdict === 'no_tb' && (
+        <p className="mt-2 rounded-md bg-verdict-uncertain/10 px-3 py-2 text-[11px] leading-snug text-verdict-uncertain">
+          A negative screen does <strong>not</strong> rule out subclinical or early TB — chest X-ray misses
+          roughly 40–50% of subclinical disease. Test symptomatic or high-risk patients regardless of this result.
+        </p>
+      )}
 
       {/* one-line reading + confidence; numbers live in Details below */}
       <div className="mt-3 flex items-center gap-4">
