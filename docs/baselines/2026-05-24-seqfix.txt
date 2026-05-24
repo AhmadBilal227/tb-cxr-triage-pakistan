@@ -1,0 +1,7 @@
+main=13092 (pos 1747) | sequelae=139 | TB test=2619 | scar test=42 | levers=['fusion', 'zonal']
+=== BASELINE (active head, NO scar negatives) ===
+[baseline] TB-test sens=0.920 [0.89-0.95] spec=0.997 | SeqFPR(held-out scar)=34/42=0.810 [0.66-0.91] | thr=0.744 T=1.69
+=== FIXED (active head + scar hard-negatives) ===
+[fixed] TB-test sens=0.957 [0.93-0.98] spec=0.991 | SeqFPR(held-out scar)=36/42=0.857 [0.71-0.95] | thr=0.477 T=1.42
+
+SeqFPR 0.810 -> 0.857  (delta +0.048)  | TB sens 0.920 -> 0.957 (+0.037), spec 0.997 -> 0.991
