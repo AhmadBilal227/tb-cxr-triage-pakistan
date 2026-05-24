@@ -40,6 +40,7 @@ BATCH = 256
 CAL_FRAC = 0.3          # held-out-site slice used to fit the local-recalibration threshold
 BOOTSTRAP_N = 2000      # resamples for the AUROC CI
 PREVALENCES = (0.01, 0.02)  # community-screening prevalences for the PPV/NPV table
+PRESUMPTIVE_PREVALENCES = (0.09, 0.12, 0.15)  # S-Asian presumptive/ACF-flagged band (qXR/CAD4TB cohorts)
 REMIX_SOURCES = {"qatar", "tbx11k"}  # aggregate NLM/India sets -> LODO fold is leakage-prone
 SEED = 0
 
@@ -278,9 +279,10 @@ def print_prevalence_table(ops: list[dict]) -> None:
     print(f"\n--- deployment utility (radiographic endpoint; mean of cleaner external folds: "
           f"sens={sens:.2f}, spec={spec:.2f}) ---")
     print(f"{'prevalence':>11s} {'PPV':>7s} {'NPV':>7s} {'tests/flagged case':>20s}")
-    for prev in PREVALENCES:
+    for prev in (*PREVALENCES, *PRESUMPTIVE_PREVALENCES):  # community (1-2%) + S-Asian presumptive (9-15%)
         ppv, npv, tpc = ppv_npv(sens, spec, prev)
-        print(f"{prev:>10.0%} {ppv:>7.1%} {npv:>7.3%} {tpc:>20.1f}")
+        tag = "" if prev in PREVALENCES else "  <- presumptive/ACF band"
+        print(f"{prev:>10.0%} {ppv:>7.1%} {npv:>7.3%} {tpc:>20.1f}{tag}")
     print("  NOTE: PPV/NPV are for the RADIOGRAPHIC-TB label, not bacteriologically-confirmed active TB.")
 
 
