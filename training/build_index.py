@@ -14,10 +14,28 @@ distinct, measured separately.)
 After running, eyeball the printed per-source counts; patch any source that mislabels.
 """
 from __future__ import annotations
+import ast
+import json
 import re
 from pathlib import Path
 
 import pandas as pd
+
+
+def _parse_bbox(raw: str) -> dict | None:
+    """data.csv `bbox` is ONE box per row: a python-dict string
+    "{'xmin':..,'ymin':..,'width':..,'height':..}" (COCO-ish xywh in 512x512) or the literal "none".
+    Returns the dict (with float xmin/ymin/width/height) or None for "none"/unparseable."""
+    s = str(raw).strip()
+    if not s or s.lower() == "none" or s.lower() == "nan":
+        return None
+    try:
+        d = ast.literal_eval(s)
+    except (ValueError, SyntaxError):
+        return None
+    if not isinstance(d, dict) or not {"xmin", "ymin", "width", "height"} <= set(d):
+        return None
+    return {k: float(d[k]) for k in ("xmin", "ymin", "width", "height")}
 
 REPO = Path(__file__).resolve().parents[1]
 RAW = REPO / "data" / "raw"
@@ -46,7 +64,14 @@ def patient_id(name: str) -> str:
 def build_tbx11k(src_dir: Path) -> tuple[list[dict], list[dict]]:
     """TBX11K-simplified: labels come from data.csv. Returns (binary_rows, latent_probe_rows).
     Binary: active_tb -> 1, no_tb (healthy + sick-but-no-TB) -> 0. latent_tb -> probe (held out).
-    Unlabeled test/ images are not in the CSV, so they are naturally excluded."""
+    Unlabeled test/ images are not in the CSV, so they are naturally excluded.
+
+    bbox handling: data.csv has ONE box per row, so an image with K active-TB boxes spans K rows.
+    We GROUP by fname and emit exactly ONE row per image, aggregating only the ACTIVE-TB boxes into
+    a JSON list string in the `bbox` column (COCO-ish [{'xmin','ymin','width','height'}, ...] in the
+    image's original 512x512 frame; "[]" when there are none). Latent/sequelae boxes are deliberately
+    EXCLUDED from this list (ethos: only active TB supervises localization). 30 images carry BOTH
+    active and latent boxes — for those we keep the active boxes and drop the latent ones."""
     csvs = list(src_dir.rglob("data.csv"))
     if not csvs:
         print("tbx11k: data.csv not found — skipping")
@@ -54,29 +79,43 @@ def build_tbx11k(src_dir: Path) -> tuple[list[dict], list[dict]]:
     df = pd.read_csv(csvs[0])
     base = csvs[0].parent
     by_name = {p.name: p for p in base.rglob("*") if p.is_file() and IMG.search(p.name)}
-    binary: list[dict] = []
-    latent: list[dict] = []
-    miss = 0
+    # group csv rows by fname: collect tb_types seen, the (single) target, and ACTIVE-TB boxes only
+    agg: dict[str, dict] = {}
+    miss_names: set[str] = set()
     for _, r in df.iterrows():
-        fp = by_name.get(str(r["fname"]))
+        fname = str(r["fname"])
+        fp = by_name.get(fname)
         if fp is None:
-            miss += 1
+            miss_names.add(fname)
             continue
         if "test" in (pt.lower() for pt in fp.relative_to(base).parts):
             continue  # unlabeled competition split
-        common = {"path": str(fp.relative_to(REPO)), "patient_id": f"tbx11k_{fp.stem}"}
-        tb_type, target = str(r["tb_type"]), str(r["target"])
+        a = agg.setdefault(fname, {"fp": fp, "tb_types": set(), "target": str(r["target"]), "boxes": []})
+        tb_type = str(r["tb_type"])
+        a["tb_types"].add(tb_type)
         if tb_type == "active_tb":
-            binary.append({**common, "label": 1, "source": "tbx11k"})
-        elif target == "no_tb":
-            binary.append({**common, "label": 0, "source": "tbx11k"})
-        elif tb_type == "latent_tb":
-            latent.append({**common, "label": 1, "source": "tbx11k_latent"})
+            box = _parse_bbox(r["bbox"])
+            if box is not None:
+                a["boxes"].append(box)
+
+    binary: list[dict] = []
+    latent: list[dict] = []
+    for fname, a in agg.items():
+        fp = a["fp"]
+        common = {"path": str(fp.relative_to(REPO)), "patient_id": f"tbx11k_{fp.stem}"}
+        if "active_tb" in a["tb_types"]:
+            # active TB present -> positive; carry ONLY its active boxes (latent boxes excluded above)
+            binary.append({**common, "label": 1, "source": "tbx11k", "bbox": json.dumps(a["boxes"])})
+        elif a["target"] == "no_tb":
+            binary.append({**common, "label": 0, "source": "tbx11k", "bbox": "[]"})
+        elif "latent_tb" in a["tb_types"]:
+            latent.append({**common, "label": 1, "source": "tbx11k_latent", "bbox": "[]"})
     pos = sum(b["label"] for b in binary)
-    if miss:
-        print(f"tbx11k: {miss} csv rows had no matching image file (skipped)")
-    print(f"tbx11k: {len(binary)} binary ({pos} active-TB pos, {len(binary)-pos} neg) "
-          f"+ {len(latent)} latent-TB held out as a probe")
+    n_boxed = sum(1 for b in binary if b["label"] == 1 and b["bbox"] != "[]")
+    if miss_names:
+        print(f"tbx11k: {len(miss_names)} csv fnames had no matching image file (skipped)")
+    print(f"tbx11k: {len(binary)} binary ({pos} active-TB pos [{n_boxed} with boxes], "
+          f"{len(binary)-pos} neg) + {len(latent)} latent-TB held out as a probe")
     return binary, latent
 
 
@@ -105,6 +144,7 @@ def main() -> None:
                     "label": lab,
                     "source": src,
                     "patient_id": f"{src}_{patient_id(p.name)}",
+                    "bbox": "[]",  # non-TBX11K sources have no boxes; keep the column consistent
                 }
             )
             n += 1
