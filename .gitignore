@@ -18,3 +18,5 @@ features.npy
 # Python bytecode cache
 __pycache__/
 
+
+data/extract_progress.txt

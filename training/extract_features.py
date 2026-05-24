@@ -19,6 +19,7 @@ TorchXRayVision then applies its OWN [-1024,1024] normalization on top of the ha
 """
 from __future__ import annotations
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -161,6 +162,7 @@ def main() -> None:
     paths = [str(p) if str(p).startswith("/") else str(REPO / p) for p in df["path"]]
     srcs = df["source"].astype(str).tolist()
 
+    t0 = time.time()
     with ThreadPoolExecutor(max_workers=WORKERS) as ex:
         for s in tqdm(range(0, len(df), BATCH)):
             rows = list(range(s, min(s + BATCH, len(df))))
@@ -196,6 +198,12 @@ def main() -> None:
                 tok_l.append(patches[j])
                 txv_l.append(txv[j])
                 keep.append(i)
+            done = min(s + BATCH, len(df))
+            el = time.time() - t0
+            rate = el / max(1, done)
+            with open(DATA / "extract_progress.txt", "w") as pf:  # live, greppable progress
+                pf.write(f"{done}/{len(df)} ({100 * done // len(df)}%) | elapsed {int(el)}s | "
+                         f"{rate:.3f} s/img | eta {int((len(df) - done) * rate)}s\n")
 
     if not cls_l:
         raise SystemExit("no features extracted — check data/index_dedup.csv paths")
