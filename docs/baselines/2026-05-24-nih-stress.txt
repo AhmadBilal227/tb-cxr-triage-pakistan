@@ -1,0 +1,59 @@
+loading training features: /Users/ahmadbilal/Downloads/hobby/TB detector/data/features.npz
+loading NIH features:      /Users/ahmadbilal/Downloads/hobby/TB detector/data/features_nih14.npz
+  training rows=13092  pos=1747  NIH rows=10000
+
+=== step 1: load or train deployed T2 head (fusion+zonal+box) ===
+loaded cached head: /Users/ahmadbilal/Downloads/hobby/TB detector/data/tb_head_t2.pt
+
+=== step 2: refit temperature + 0.95-sensitivity threshold on val split (SEED=0) ===
+  refit T=1.5915  thr@95%sens=0.6105
+  vs saved tb_threshold_t2.json T=1.5915  thr=0.6105  (|dT|=0.0000, |dthr|=0.0000)
+
+=== step 3: NIH overall FPR (the deceptive naive baseline) ===
+  NIH all 10k: n=10000  n_fp=262  FPR=0.0262  mean_score=0.046  frac>=.95=0.007  Brier=0.025  ECE=0.046
+
+=== step 4: per-finding stratified FPR ===
+  skipped (n<50): {'Hernia': 13}
+
+--- stratified mimic-FPR stress (deployed thr=0.610, T=1.591; radiographic endpoint, NOT bacteriologically-confirmed) ---
+        subgroup     n     FPR          95% CI   mean frac>=.95   Brier    ECE
+Pleural_Thickening   273   0.103     0.069-0.145  0.124     0.040   0.088  0.124
+        Fibrosis   147   0.102     0.058-0.163  0.149     0.048   0.102  0.149
+            Mass   481   0.067     0.046-0.093  0.107     0.021   0.062  0.107
+          Nodule   553   0.063     0.044-0.087  0.099     0.020   0.061  0.099
+    Pneumothorax   312   0.051     0.030-0.082  0.088     0.010   0.048  0.088
+   Consolidation   347   0.049     0.029-0.077  0.091     0.012   0.047  0.091
+    Infiltration  1597   0.040     0.031-0.051  0.065     0.009   0.036  0.065
+           Edema   175   0.040     0.016-0.081  0.074     0.006   0.037  0.074
+        Effusion  1004   0.039     0.028-0.053  0.075     0.011   0.041  0.075
+       Emphysema   183   0.033     0.012-0.070  0.070     0.016   0.035  0.070
+       Pneumonia    96   0.031     0.006-0.089  0.069     0.010   0.037  0.069
+     Atelectasis   921   0.018     0.011-0.029  0.041     0.004   0.019  0.041
+      No_Finding  5788   0.016     0.013-0.020  0.030     0.004   0.016  0.030
+    Cardiomegaly   183   0.011     0.001-0.039  0.021     0.000   0.009  0.021
+  NOTE: a 'false positive' = the head flagged a radiographic mimic the source labeled non-active.
+  Brier/ECE are computed ON each subgroup; small mimic sets have WIDE CIs (the uncertainty is intentional).
+
+=== step 5: ranked summary (mimicness tag) ===
+             finding        tag     n     FPR           95% CI   mean   Brier    ECE
+  Pleural_Thickening   TB-mimic   273   0.103      0.069-0.145  0.124   0.088  0.124
+            Fibrosis   TB-mimic   147   0.102      0.058-0.163  0.149   0.102  0.149
+                Mass   TB-mimic   481   0.067      0.046-0.093  0.107   0.062  0.107
+              Nodule   TB-mimic   553   0.063      0.044-0.087  0.099   0.061  0.099
+        Pneumothorax  other-abn   312   0.051      0.030-0.082  0.088   0.048  0.088
+       Consolidation   TB-mimic   347   0.049      0.029-0.077  0.091   0.047  0.091
+        Infiltration   TB-mimic  1597   0.040      0.031-0.051  0.065   0.036  0.065
+               Edema  other-abn   175   0.040      0.016-0.081  0.074   0.037  0.074
+            Effusion  other-abn  1004   0.039      0.028-0.053  0.075   0.041  0.075
+           Emphysema  other-abn   183   0.033      0.012-0.070  0.070   0.035  0.070
+           Pneumonia  other-abn    96   0.031      0.006-0.089  0.069   0.037  0.069
+         Atelectasis   TB-mimic   921   0.018      0.011-0.029  0.041   0.019  0.041
+          No_Finding   easy-neg  5788   0.016      0.013-0.020  0.030   0.016  0.030
+        Cardiomegaly  other-abn   183   0.011      0.001-0.039  0.021   0.009  0.021
+
+=== headline: mean FPR / Brier / ECE by tag ===
+    TB-mimic (k=7)  FPR=0.063  Brier=0.059  ECE=0.097
+   other-abn (k=6)  FPR=0.034  Brier=0.035  ECE=0.066
+    easy-neg (k=1)  FPR=0.016  Brier=0.016  ECE=0.030
+
+wrote /Users/ahmadbilal/Downloads/hobby/TB detector/data/nih_stress_rows.json
