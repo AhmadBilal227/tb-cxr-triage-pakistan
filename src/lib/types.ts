@@ -274,6 +274,24 @@ export interface Adjudication {
     vlmProb: number | null;
     vlmUncertainty: number;
   };
+  /**
+   * M24 LOCAL-MODEL ENRICHMENT.
+   * Validated-model intermediates the engine USED to discard: the 8x8 box-evidence
+   * grid, the per-zone calibrated TB probabilities (7 keys, see ZoneKey union in
+   * providers/localTriage.ts), the 18 TXRV pathology scores, and the seg crop box.
+   * Populated ONLY on the local-onnx-via-server path; absent on every VLM-primary
+   * adjudication. UI components MUST treat each sub-field as optional.
+   */
+  local_enrichment?: {
+    box_evidence_grid?: number[][];
+    zonal_scores?: Partial<Record<
+      'upper_l' | 'upper_r' | 'mid_l' | 'mid_r' | 'lower_l' | 'lower_r' | 'hilar',
+      number
+    >>;
+    txrv_pathologies?: Record<string, number>;
+    crop_box?: { x: number; y: number; w: number; h: number };
+    inversion_detected?: boolean;
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -246,6 +246,16 @@ export function combineLocalIntoAdjudication(args: {
             : 0.05
         : 0,
     },
+    // M24: surface every validated-model intermediate the server emits. The UI
+    // detail components (BoxEvidenceHeatmap, ZonalBars, PathologyList) render
+    // only the sub-fields that exist, so dropping any one is graceful.
+    local_enrichment: {
+      box_evidence_grid: local.box_evidence_grid,
+      zonal_scores: local.zonal_scores,
+      txrv_pathologies: local.txrv_pathologies,
+      crop_box: local.crop_box,
+      inversion_detected: local.inversion_detected,
+    },
   };
 
   // Synthetic ensemble: ONE member representing the local head (with its
