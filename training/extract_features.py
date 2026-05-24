@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -382,10 +383,18 @@ def main(mode: str = "main") -> None:
         hilus_med_idx = [i for i, t in enumerate(targets) if "hilus" in t or "mediastinum" in t]
         seg = seg.to(DEVICE)
 
-    def load_prep(path: str):
+    # FAIL-VISIBLE (P1): count every image we silently dropped (unreadable / harmonize failure) per
+    # source. A non-zero count means features.npz has FEWER images than the index — surfaced in the
+    # final summary so a degraded extraction is never hidden. Counter is touched from worker threads.
+    skip_by_src: dict[str, int] = {}
+    skip_lock = threading.Lock()
+
+    def load_prep(arg: tuple[str, str]):
         """Thread-pool CPU work: returns (harmonized_gray_u8, txrv_tensor[1,224,224], inv_suspected,
         orig_hw). orig_hw is the ORIGINAL (pre-harmonize) (H0,W0) so TBX11K boxes (in original coords)
-        can be scaled into the harmonized frame downstream."""
+        can be scaled into the harmonized frame downstream. On any failure, increments the per-source
+        skip counter and returns None (the row is dropped from features.npz)."""
+        path, source = arg
         try:
             g = _read_gray(path)
             inv = _detect_inversion(g)  # detect-and-log only; do NOT silently transform pixels
@@ -396,6 +405,8 @@ def main(mode: str = "main") -> None:
             return h, norm, inv, orig_hw
         except Exception as e:
             print("skip", path, repr(e)[:100])
+            with skip_lock:
+                skip_by_src[source] = skip_by_src.get(source, 0) + 1
             return None
 
     @torch.no_grad()
@@ -501,7 +512,7 @@ def main(mode: str = "main") -> None:
     with ThreadPoolExecutor(max_workers=WORKERS) as ex:
         for s in tqdm(range(0, len(df), BATCH)):
             rows = list(range(s, min(s + BATCH, len(df))))
-            prepped = list(ex.map(load_prep, [paths[i] for i in rows]))
+            prepped = list(ex.map(load_prep, [(paths[i], srcs[i]) for i in rows]))
             harm_list, txrv_list, ok_rows, orig_hws = [], [], [], []
             for i, pr in zip(rows, prepped):
                 if pr is not None:
@@ -568,13 +579,22 @@ def main(mode: str = "main") -> None:
     if inv_by_src:
         print(f"MONOCHROME1 SUSPECTED (detect-only, not transformed) per source: {inv_by_src}  "
               f"— investigate if a source has a non-trivial rate; medical-grade needs DICOM tags")
+    n_skipped = int(sum(skip_by_src.values()))
+    if n_skipped:
+        print(f"SKIPPED (unreadable / harmonize failure, dropped from features.npz): {n_skipped}/{len(df)} "
+              f"images per source: {skip_by_src}  — investigate; features.npz is short by this many rows")
+    else:
+        print(f"skipped images: 0/{len(df)} (every indexed image extracted cleanly)")
     sub = df.iloc[keep]
     grid_arr = np.stack(grid_l).astype("float16")          # [N,8,8] indexed [gy,gx]
     zones_arr = np.stack(zones_l).astype("float16")        # [N,64,7] row-major gy*8+gx
     hasbox_arr = np.asarray(hasbox_l, dtype=bool)          # [N]
-    # ROW-MAJOR CONSISTENCY ASSERT: a 64-token map flattened from grid_label[gy,gx] via .reshape(64)
-    # must use index gy*8+gx — the exact order the Rad-DINO patch pooling produces (verified above).
-    # Probe with a single hot cell and confirm it lands at gy*8+gx after the same flatten the head uses.
+    # ROW-MAJOR CONSISTENCY: grid_label[gy,gx].reshape(64) must put a hot cell at gy*8+gx so it lines
+    # up with the Rad-DINO patch tokens produced by `tok.transpose(1,2).reshape(B,D,37,37)`.
+    # NOTE: the probe below ONLY proves numpy.reshape is C-order (a tautology). It does NOT prove the
+    # MODEL emits tokens row-major. The REAL empirical proof — feed Rad-DINO a top-white/bottom-black
+    # image, run the production reshape, confirm gy increases downward — lives in
+    # training/test_extract_geom.py::test_radino_token_order_is_row_major (slow; needs the model).
     _probe = np.zeros((PATCH_GRID, PATCH_GRID), dtype="float32"); _probe[2, 5] = 1.0
     assert int(_probe.reshape(-1).argmax()) == 2 * PATCH_GRID + 5, "grid_label flatten is not row-major gy*8+gx"
     assert zones_arr.shape[1] == PATCH_GRID * PATCH_GRID and zones_arr.shape[2] == N_ZONES

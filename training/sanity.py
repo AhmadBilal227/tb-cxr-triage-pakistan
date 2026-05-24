@@ -74,6 +74,18 @@ def main() -> None:
     print("=== ANTI-SHORTCUT: label randomization (permuted-label LODO AUROC must be < 0.60) ===")
     print(label_randomization_check(arrs, y, src, groups))
 
+    print("\n=== ANTI-SHORTCUT: model randomization (trained attention must DIFFER from a random head) ===")
+    head_path = DATA / "tb_head.pt"
+    if not head_path.exists():
+        print(f"SKIP model_randomization_check: {head_path} not found "
+              f"(run training/train_tb.py first to write the trained head).")
+    else:
+        model = TBHead(arrs["patches"].shape[2], arrs["cls"].shape[1], arrs["txrv"].shape[1],
+                       use_patches=True)
+        model.load_state_dict(torch.load(head_path, map_location="cpu"))
+        model.eval()
+        print(model_randomization_check(model, arrs))
+
 
 if __name__ == "__main__":
     main()

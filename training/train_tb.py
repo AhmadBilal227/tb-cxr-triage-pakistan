@@ -137,8 +137,13 @@ def ppv_npv(sens: float, spec: float, prev: float) -> tuple[float, float, float]
     return ppv, npv, tests_per_case
 
 
-def _batches(n: int, shuffle: bool):
-    idx = np.random.permutation(n) if shuffle else np.arange(n)
+def _batches(n: int, shuffle: bool, rng: np.random.Generator | None = None):
+    # Reproducibility (P0): batch shuffling uses an EXPLICIT, fold-stable Generator threaded down
+    # from train_head — never the global np.random state, whose position drifts across folds/runs.
+    if shuffle:
+        idx = rng.permutation(n) if rng is not None else np.random.permutation(n)
+    else:
+        idx = np.arange(n)
     for s in range(0, n, BATCH):
         yield idx[s : s + BATCH]
 
@@ -148,7 +153,11 @@ def _gather(arrs: dict, idx: np.ndarray) -> dict:
 
 
 def train_head(arrs: dict, y: np.ndarray, tr: np.ndarray, va: np.ndarray, use_patches: bool,
-               max_epochs: int = 80, patience: int = 8) -> TBHead:
+               max_epochs: int = 80, patience: int = 8, seed: int = SEED) -> TBHead:
+    # `seed` is FOLD-STABLE (constructed per call as SEED + fold_index by the LODO caller) so each
+    # fold's batch shuffle is reproducible and INDEPENDENT of how many folds ran before it. The old
+    # code shared the global np.random state, so a fold's shuffle depended on prior folds' draws.
+    rng = np.random.default_rng(seed)
     model = TBHead(arrs["patches"].shape[2], arrs["cls"].shape[1], arrs["txrv"].shape[1], use_patches).to(DEVICE)
     n_pos = max(1, int((y[tr] == 1).sum()))
     n_neg = max(1, int((y[tr] == 0).sum()))
@@ -159,7 +168,7 @@ def train_head(arrs: dict, y: np.ndarray, tr: np.ndarray, va: np.ndarray, use_pa
     best_ap, best_state, bad = -1.0, None, 0
     for _ in range(max_epochs):
         model.train()
-        for b in _batches(len(tr), shuffle=True):
+        for b in _batches(len(tr), shuffle=True, rng=rng):
             ix = tr[b]
             g = _gather({k: arrs[k] for k in ("cls", "patches", "txrv")}, ix)
             yt = torch.tensor(y[ix], dtype=torch.float32, device=DEVICE)  # raw targets, no smoothing
@@ -212,17 +221,42 @@ def _sens_spec(y: np.ndarray, p: np.ndarray, thr: float):
     return sens, lo, hi, spec
 
 
+RECAL_SPLITS = 20  # random cal/eval splits — recalibrated sensitivity is reported as MEDIAN + IQR
+                   # (a single split is a noisy draw; threshold-selection variance must be visible)
+
+
 def _recalibrated(yte: np.ndarray, pte: np.ndarray):
-    """Fit threshold on a CAL_FRAC labeled slice of the held-out site, eval on the disjoint rest."""
+    """Recalibrate the threshold on a CAL_FRAC labeled slice of the held-out site, eval on the disjoint
+    rest. A SINGLE split is one noisy draw of a threshold-selection process, so we repeat over
+    RECAL_SPLITS distinct-seed splits and report the MEDIAN sensitivity + IQR across splits. The
+    Clopper-Pearson CI is kept on the MEDIAN-sensitivity split's eval slice (a representative single-eval
+    finite-sample interval). Returns the per-split median operating point so the prevalence table and the
+    acceptance gate see a stable number, not a coin flip.
+
+    Returns: (sens_med, lo, hi, spec_med, npos_ev, sens_iqr_lo, sens_iqr_hi) or None when the floor
+    (>=8 pos and >=8 neg) is not met or every split degenerates to a single-class slice."""
     if int((yte == 1).sum()) < 8 or int((yte == 0).sum()) < 8:
         return None
     loc = np.arange(len(yte))
-    cal, ev = train_test_split(loc, test_size=1 - CAL_FRAC, stratify=yte, random_state=SEED)
-    if (yte[cal] == 1).sum() == 0 or (yte[ev] == 1).sum() == 0 or (yte[ev] == 0).sum() == 0:
+    results = []  # (sens, lo, hi, spec, npos_ev) per valid split
+    for k in range(RECAL_SPLITS):
+        cal, ev = train_test_split(loc, test_size=1 - CAL_FRAC, stratify=yte, random_state=SEED + k)
+        if (yte[cal] == 1).sum() == 0 or (yte[ev] == 1).sum() == 0 or (yte[ev] == 0).sum() == 0:
+            continue
+        thr_local = threshold_for_sensitivity(yte[cal], pte[cal])
+        sens, lo, hi, spec = _sens_spec(yte[ev], pte[ev], thr_local)
+        results.append((sens, lo, hi, spec, int((yte[ev] == 1).sum())))
+    if not results:
         return None
-    thr_local = threshold_for_sensitivity(yte[cal], pte[cal])
-    sens, lo, hi, spec = _sens_spec(yte[ev], pte[ev], thr_local)
-    return sens, lo, hi, spec, int((yte[ev] == 1).sum()), spec
+    sens_vals = np.array([r[0] for r in results], dtype=float)
+    spec_vals = np.array([r[3] for r in results], dtype=float)
+    sens_med = float(np.median(sens_vals))
+    spec_med = float(np.median(spec_vals))
+    iqr_lo, iqr_hi = float(np.percentile(sens_vals, 25)), float(np.percentile(sens_vals, 75))
+    # CI from the split whose sensitivity is closest to the median (representative single eval)
+    med_split = min(results, key=lambda r: abs(r[0] - sens_med))
+    _, lo, hi, _, npos_ev = med_split
+    return sens_med, lo, hi, spec_med, npos_ev, iqr_lo, iqr_hi
 
 
 def run_lodo(arrs: dict, y: np.ndarray, src: np.ndarray, groups: np.ndarray | None,
@@ -231,7 +265,7 @@ def run_lodo(arrs: dict, y: np.ndarray, src: np.ndarray, groups: np.ndarray | No
     aucs, ops = [], []
     tag = "fusion+attention" if use_patches else "fusion-only"
     print(f"\n--- LODO ({tag}) — radiographic-TB-pattern, vs radiographic reference ---")
-    for ho in sources:
+    for fold_index, ho in enumerate(sources):
         te = np.where(src == ho)[0]
         tr_all = np.where(src != ho)[0]
         if (y[te] == 1).sum() == 0 or (y[te] == 0).sum() == 0:
@@ -243,7 +277,9 @@ def run_lodo(arrs: dict, y: np.ndarray, src: np.ndarray, groups: np.ndarray | No
             leak = np.array([g in te_groups and g >= 0 for g in groups[tr_all]])
             tr_all = tr_all[~leak]
         tr, va = train_test_split(tr_all, test_size=0.2, stratify=y[tr_all], random_state=SEED)
-        model = train_head(arrs, y, tr, va, use_patches)
+        # FOLD-STABLE seed for batch shuffling: each fold gets SEED + its position in `sources`, so
+        # the result is reproducible run-to-run and a fold's shuffle does not depend on prior folds.
+        model = train_head(arrs, y, tr, va, use_patches, seed=SEED + fold_index)
         T = fit_temperature(predict_logits(model, arrs, va), y[va])
         thr = threshold_for_sensitivity(y[va], predict(model, arrs, va, T))  # FROZEN, train-derived
         pte = predict(model, arrs, te, T)
@@ -259,14 +295,27 @@ def run_lodo(arrs: dict, y: np.ndarray, src: np.ndarray, groups: np.ndarray | No
               f"AUC={auc:.3f} [95% CI {a_lo:.2f}-{a_hi:.2f}]  ECE={cal_ece:.3f}{flag}")
         print(f"      cold-start  (frozen thr)  sens={s_f:.3f} [95% CI {lo_f:.2f}-{hi_f:.2f}] spec={sp_f:.3f}")
         if rec is not None:
-            s_r, lo_r, hi_r, sp_r, npos_e, spec_r = rec
-            print(f"      + local recalibration     sens={s_r:.3f} [95% CI {lo_r:.2f}-{hi_r:.2f}] spec={sp_r:.3f}"
-                  f"  (eval n_pos={npos_e})")
-            ops.append({"source": ho, "sens": s_r, "spec": spec_r, "remix": ho in REMIX_SOURCES})
+            s_r, lo_r, hi_r, sp_r, npos_e, iqr_lo, iqr_hi = rec
+            print(f"      + local recalibration     sens(median of {RECAL_SPLITS} splits)={s_r:.3f} "
+                  f"[IQR {iqr_lo:.2f}-{iqr_hi:.2f}; median-split 95% CI {lo_r:.2f}-{hi_r:.2f}] "
+                  f"spec={sp_r:.3f}  (eval n_pos={npos_e})")
+            ops.append({"source": ho, "sens": s_r, "spec": sp_r, "remix": ho in REMIX_SOURCES,
+                        "sens_ci": (lo_r, hi_r), "sens_iqr": (iqr_lo, iqr_hi)})
         else:
             print(f"      + local recalibration     n/a (too few positives to split)")
     mean_auc = float(np.mean(aucs)) if aucs else float("nan")
     print(f"  >>> mean LODO AUC ({tag}) = {mean_auc:.3f}")
+    # ACCEPTANCE GATE leads with the WORST-fold external (non-remix) recalibrated sensitivity, not the
+    # mean — a screen is judged by its weakest site, and the re-mix folds are leakage-prone (excluded).
+    ext = [o for o in ops if not o["remix"] and not np.isnan(o["sens"])]
+    if ext:
+        worst = min(ext, key=lambda o: o["sens"])
+        wlo, whi = worst["sens_ci"]
+        print(f"  >>> WORST-FOLD external (non-remix) recalibrated sens ({tag}) = {worst['sens']:.3f} "
+              f"[95% CI {wlo:.2f}-{whi:.2f}]  holdout={worst['source']}  <-- acceptance gate")
+    else:
+        print(f"  >>> WORST-FOLD external (non-remix) recalibrated sens ({tag}) = n/a "
+              f"(no clean external fold with a recalibration split)")
     return mean_auc, ops
 
 
