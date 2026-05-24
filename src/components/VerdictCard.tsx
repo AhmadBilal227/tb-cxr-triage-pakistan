@@ -221,6 +221,44 @@ function PerceptionPathDisclosure({
 }): JSX.Element {
   const path = adjudication.perception_path ?? 'vlm-primary';
 
+  // Milestone 22 — LOCAL-MODE path. The user's M4 actually ran the full validated
+  // pipeline (Rad-DINO + TXRV + TBHeadT2 + InactiveSequelaeHead under their
+  // calibrated temperatures) and we OWN those numbers. Replace the M21 generic-
+  // VLM disclosure with the LODO sensitivity/specificity/AUROC plus the M18
+  // NIH-stress mimic FPR caveat (~10% on scar-shaped findings, measured).
+  // The "general-purpose VLM" line MUST NOT appear here — that disclosure is
+  // wrong for the local-mode pathway and would lie about what produced the
+  // verdict.
+  if (path === 'local-onnx-via-server') {
+    const verifierRan = adjudication.vlm_audit?.consistency_check_ran ?? false;
+    const verifierDisagreed = adjudication.vlm_audit?.consistency_check_disagreed ?? false;
+    const verifierTag = verifierDisagreed
+      ? 'gpt verifier disagreed'
+      : verifierRan
+        ? 'gpt verifier agreed'
+        : 'gpt verifier not fired';
+    return (
+      <>
+        <div
+          className="mt-1 px-1 text-[10px] leading-snug text-muted/80"
+          data-testid="local-mode-disclosure"
+        >
+          This result is produced by the validated Rad-DINO + TorchXRayVision research model
+          running on your machine. Reported LODO sensitivity 0.800 / specificity 0.911 /
+          AUROC 0.922 on 13,092 held-out predictions; per-site recalibration recommended.
+          Higher false-positive rate (~10%) expected on radiographically scar-shaped findings
+          (healed fibrosis, pleural thickening — M18 NIH stress). Not a medical device.
+        </div>
+        <div
+          className="mt-1 px-1 font-mono text-[9px] uppercase tracking-wider text-muted/60"
+          data-testid="perception-path-indicator"
+        >
+          perception path: local trained model (validated) · {verifierTag}
+        </div>
+      </>
+    );
+  }
+
   // ONNX path: the M19 disclosure (our trained head's cross-site mimic FPR).
   if (path === 'onnx-primary') {
     return (

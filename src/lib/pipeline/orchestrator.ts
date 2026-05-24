@@ -28,6 +28,11 @@ import {
   type VlmTriageCall,
 } from './vlmTriage';
 import { applyVlmEscalation } from './vlmEscalation';
+import {
+  applySequelaeEscalation,
+  DEFAULT_BORDERLINE_HIGH,
+} from './sequelaeEscalation';
+import { localTriage, type LocalTriageResult } from '@/lib/providers/localTriage';
 
 type Emit = (e: PipelineEvent) => void;
 
@@ -89,6 +94,222 @@ interface VlmCombineResult {
   adjudication: Adjudication;
   /** Synthetic ensemble result so the existing UI Details view still has numbers to show. */
   ensemble: EnsembleResult;
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 22 — local-mode helpers.
+//
+// localBorderline: when the calibrated `tb_prob` from the local server sits
+// inside [0.35, 0.65] OR `s_inactive` exceeds the scar-recall threshold (0.7126),
+// we ALSO fire the gpt-5.5 vision call — it doesn't decide, it consistency-checks.
+// A disagreement on screen_result forces ABSTAIN; agreement leaves the local
+// verdict untouched. This is the M22 "GPT becomes the second opinion, not the
+// primary" pivot from M21.
+//
+// The borderline band is the SAME band the M19 sequelaeEscalation rule uses:
+// BORDERLINE_LOW = 0.35 (lower edge) and the validated thr@95sens = 0.6105 (upper
+// edge). For the local-mode GPT-verifier trigger we extend the upper edge to 0.65
+// to match the M21 VLM borderline window (so the verifier policy is consistent
+// across paths even though the threshold itself is path-specific). The 0.7126
+// s_inactive trigger is the M19 escalate-not-clear flag.
+// ---------------------------------------------------------------------------
+const LOCAL_BORDERLINE_LOW = 0.35;
+const LOCAL_BORDERLINE_HIGH_FOR_GPT_CHECK = 0.65;
+const LOCAL_S_INACTIVE_TRIGGER_FOR_GPT_CHECK = 0.7126;
+
+export function isLocalBorderlineForGptCheck(local: LocalTriageResult): boolean {
+  if (
+    local.tb_prob >= LOCAL_BORDERLINE_LOW &&
+    local.tb_prob <= LOCAL_BORDERLINE_HIGH_FOR_GPT_CHECK
+  ) {
+    return true;
+  }
+  if (local.s_inactive >= LOCAL_S_INACTIVE_TRIGGER_FOR_GPT_CHECK) {
+    return true;
+  }
+  return false;
+}
+
+/** Map the local pipeline's deterministic verdict back to TbScreenResult so the
+ *  GPT verifier consistency check uses the SAME alphabet (screen_positive |
+ *  screen_negative | abstain). */
+function localVerdictToScreen(v: Verdict): TbScreenResult {
+  if (v === 'tb') return 'screen_positive';
+  if (v === 'no_tb') return 'screen_negative';
+  return 'abstain';
+}
+
+interface LocalCombineResult {
+  adjudication: Adjudication;
+  ensemble: EnsembleResult;
+}
+
+/**
+ * Build the Adjudication + synthetic EnsembleResult from a local-server
+ * TriageResult and (optional) gpt-5.5 verifier submission.
+ *
+ * Decision flow:
+ *   1. Base verdict = local.verdict (already calibrated under T and run through
+ *      the deterministic sequelaeEscalation rule on the SERVER side).
+ *   2. If a verifier ran and disagreed on screen_result → ABSTAIN.
+ *   3. Re-apply the sequelae escalation client-side as a belt-and-braces step:
+ *      it must be idempotent (the server already applied it), so this only fires
+ *      on the off-chance the server-side rule diverges. If it ever does, the
+ *      audit trail records "client safety net escalated" so the drift is visible.
+ *
+ * Confidence is rendered from `tb_prob`: above the validated threshold (0.6105)
+ * scales linearly to ~100; below the threshold scales linearly to ~0. This
+ * is the ONLY place in the project that allows a "high-confidence" number,
+ * because it IS a calibrated probability from a validated head.
+ */
+export function combineLocalIntoAdjudication(args: {
+  local: LocalTriageResult;
+  gptVerifier: VlmTriageCall | null;
+}): LocalCombineResult {
+  const { local, gptVerifier } = args;
+
+  const baseVerdict: Verdict = local.verdict;
+  const reasons: string[] = [];
+  if (local.safety_net_applied) {
+    reasons.push(`server safety net: ${local.safety_net_applied}`);
+  }
+
+  // Verifier consistency check — disagreement forces ABSTAIN. We map the local
+  // verdict back to the screen_result enum so the comparison is apples-to-apples.
+  let finalVerdict: Verdict = baseVerdict;
+  let verifierDisagreed = false;
+  if (gptVerifier) {
+    const localScreen = localVerdictToScreen(baseVerdict);
+    const verifierScreen = gptVerifier.submission.tb_screen_result;
+    if (verifierScreen !== localScreen) {
+      verifierDisagreed = true;
+      finalVerdict = 'abstain';
+      reasons.push(
+        `gpt verifier disagreed (local=${localScreen}, verifier=${verifierScreen})`,
+      );
+    }
+  }
+
+  // Belt-and-braces: re-apply the sequelae escalation client-side. Server
+  // already ran it (verdict came back as 'abstain' if it fired) — this is here
+  // so a future server-rule drift surfaces immediately rather than silently.
+  const clientEsc = applySequelaeEscalation({
+    verdict: finalVerdict,
+    tbProb: local.tb_prob,
+    sInactive: local.s_inactive,
+    borderlineHigh: DEFAULT_BORDERLINE_HIGH,
+  });
+  if (clientEsc.escalated) {
+    finalVerdict = clientEsc.verdict;
+    if (clientEsc.reason) reasons.push(`client safety net escalated: ${clientEsc.reason}`);
+  }
+
+  // Confidence: linear ramp on tb_prob, anchored at the validated threshold so
+  // a value bang-on threshold reads ~50%. Capped at 95 — even the validated head
+  // has measured ~10% mimic FPR on NIH stress, so we never claim 100.
+  const distFromThr = local.tb_prob - local.decided_at_threshold;
+  const span = local.tb_prob >= local.decided_at_threshold
+    ? Math.max(0.001, 1 - local.decided_at_threshold)
+    : Math.max(0.001, local.decided_at_threshold);
+  const confidencePct = Math.round(clamp(50 + (distFromThr / span) * 45, 5, 95));
+
+  const safetyNetApplied = local.safety_net_applied !== null || clientEsc.escalated || verifierDisagreed;
+  const rationale = verifierDisagreed
+    ? `[Verifier disagreement: ${baseVerdict} → ${finalVerdict}] tb_prob ${local.tb_prob.toFixed(3)} ` +
+      `vs threshold ${local.decided_at_threshold.toFixed(3)}; s_inactive ${local.s_inactive.toFixed(3)}.`
+    : `Local validated pipeline: tb_prob ${local.tb_prob.toFixed(3)} (calibrated under T=` +
+      `${local.audit.calibration.T.toFixed(3)}) vs validated threshold ` +
+      `${local.decided_at_threshold.toFixed(3)}; s_inactive ${local.s_inactive.toFixed(3)} ` +
+      `(under T_seq=${local.audit.calibration.T_sequelae.toFixed(3)}).`;
+
+  const adjudication: Adjudication = {
+    verdict: finalVerdict,
+    confidence: confidencePct,
+    rationale,
+    abstain_reason:
+      finalVerdict === 'abstain'
+        ? `Refer: ${reasons.join('; ') || 'safety net or verifier flagged for review'}.`
+        : undefined,
+    auto_abstained: finalVerdict === 'abstain' && baseVerdict !== 'abstain',
+    auto_abstain_reasons: reasons,
+    perception_unavailable: false,
+    perception_path: 'local-onnx-via-server',
+    vlm_audit: gptVerifier
+      ? {
+          ...gptVerifier.audit,
+          consistency_check_ran: true,
+          consistency_check_disagreed: verifierDisagreed,
+        }
+      : undefined,
+    screening: {
+      policyVerdict: finalVerdict,
+      modelVerdict: baseVerdict,
+      fusedProb: local.tb_prob,
+      vlmProb: gptVerifier?.submission.tb_score_uncalibrated ?? null,
+      vlmUncertainty: gptVerifier
+        ? gptVerifier.submission.confidence_band === 'low'
+          ? 0.3
+          : gptVerifier.submission.confidence_band === 'medium'
+            ? 0.15
+            : 0.05
+        : 0,
+    },
+  };
+
+  // Synthetic ensemble: ONE member representing the local head (with its
+  // calibrated tb_prob), plus the GPT verifier as a SECOND member when it ran.
+  // safetyNetApplied is preserved in the trace via auto_abstain_reasons. We
+  // intentionally do NOT show the s_inactive head as its own "member" — it does
+  // not produce a TB probability, it escalates verdicts.
+  const localMember: EnsembleMember = {
+    id: 'tb',
+    label: 'Local validated head (Rad-DINO + TXRV + TBHeadT2)',
+    weight: 1,
+    status: 'done',
+    tb_prob: local.tb_prob,
+    provider_used: 'hf', // closest enum value; provider tag below carries the real id
+    latency_ms: local.latency_ms.total ?? null,
+    raw: local,
+    findings: local.image_quality.warnings,
+  };
+  const members: EnsembleMember[] = [localMember];
+  if (gptVerifier) {
+    members.push({
+      id: 'vlm',
+      label: 'GPT-5.5 Vision (verifier)',
+      weight: 0,
+      status: 'done',
+      tb_prob: gptVerifier.submission.tb_score_uncalibrated,
+      provider_used: 'openai',
+      latency_ms: gptVerifier.latencyMs,
+      raw: gptVerifier.submission,
+      uncertainty:
+        gptVerifier.submission.confidence_band === 'low'
+          ? 0.3
+          : gptVerifier.submission.confidence_band === 'medium'
+            ? 0.15
+            : 0.05,
+      samples: 1,
+    });
+  }
+  const probs = members.filter((m) => m.tb_prob !== null).map((m) => m.tb_prob as number);
+  const meanProb = probs.length ? probs.reduce((a, b) => a + b, 0) / probs.length : local.tb_prob;
+  const variance = probs.length
+    ? probs.reduce((a, b) => a + (b - meanProb) ** 2, 0) / probs.length
+    : 0;
+  const ensemble: EnsembleResult = {
+    members,
+    weightedScore: local.tb_prob,
+    std: Math.sqrt(variance),
+    disagreement: probs.length > 1 ? Math.max(...probs) - Math.min(...probs) : 0,
+    replicateFallbackCount: 0,
+  };
+
+  // Suppress unused warning when safetyNetApplied isn't user-visible elsewhere;
+  // the value flows through reasons[] and the audit pins.
+  void safetyNetApplied;
+
+  return { adjudication, ensemble };
 }
 
 /**
@@ -295,7 +516,111 @@ export async function runPipeline(
   }
 
   // ----------------------------------------------------------------------
-  // Stage 2 — Perception
+  // Stage 2 (M22) — LOCAL-MODE FAST PATH.
+  // When `settings.localMode === true` AND the FastAPI server at
+  // `settings.localServerUrl` is reachable, the local validated pipeline
+  // becomes the PRIMARY perception and gpt-5.5 vision is reduced to a borderline
+  // verifier. If the local call fails, we FALL THROUGH to the M21 VLM-primary
+  // path below — this means a user who toggles "local mode" but forgets to start
+  // the server still gets a usable run, with a banner from providerStatusStore.
+  // ----------------------------------------------------------------------
+  if (settings.localMode) {
+    emit({ type: 'stage_status', stage: 'ensemble.tb', status: 'running', note: 'local mode' });
+    let localResult: LocalTriageResult | null = null;
+    try {
+      localResult = await localTriage(image, settings.localServerUrl);
+      providerLog.push({
+        stage: 'ensemble.tb',
+        provider_used: 'hf', // pseudo: closest existing enum; the actual provider id is recorded below
+        latency_ms: localResult.latency_ms.total ?? null,
+        fell_back: false,
+      });
+      run.modelVersions['perception_primary'] =
+        `local-onnx-via-server (model_sha=${localResult.audit.model_sha.slice(0, 14)}…, ` +
+        `git=${localResult.audit.git_sha.slice(0, 7)})`;
+      run.modelVersions['local_calibration_T'] = localResult.audit.calibration.T.toFixed(6);
+      run.modelVersions['local_calibration_thr_at_95sens'] =
+        localResult.audit.calibration.thr_at_95sens.toFixed(6);
+      run.modelVersions['local_calibration_T_sequelae'] =
+        localResult.audit.calibration.T_sequelae.toFixed(6);
+      emit({ type: 'stage_status', stage: 'ensemble.tb', status: 'done' });
+    } catch (err) {
+      const message = (err as Error).message;
+      emit({ type: 'error', stage: 'ensemble.tb', message });
+      emit({
+        type: 'stage_status',
+        stage: 'ensemble.tb',
+        status: 'fallback',
+        note: 'local server unreachable; falling back to M21 VLM-primary path',
+      });
+      localResult = null;
+    }
+
+    if (localResult !== null) {
+      // Optional GPT verifier — only on borderline or scar-shape.
+      let gptVerifier: VlmTriageCall | null = null;
+      if (isLocalBorderlineForGptCheck(localResult)) {
+        emit({
+          type: 'stage_status',
+          stage: 'ensemble.vlm',
+          status: 'running',
+          note: 'local result borderline — running gpt verifier as consistency check',
+        });
+        try {
+          gptVerifier = await vlmTriage({
+            apiKey: settings.openaiKey,
+            primaryModel: settings.models.adjudicator,
+            fallbackModel: settings.models.adjudicatorFallback,
+            imageDataUrl: dataUrl,
+            role: 'verifier',
+          });
+          providerLog.push({
+            stage: 'ensemble.vlm',
+            provider_used: 'openai',
+            latency_ms: gptVerifier.latencyMs,
+            fell_back: gptVerifier.fellBack,
+          });
+          emit({ type: 'stage_status', stage: 'ensemble.vlm', status: 'done' });
+        } catch (e) {
+          emit({
+            type: 'error',
+            stage: 'ensemble.vlm',
+            message: `gpt verifier failed: ${(e as Error).message}`,
+          });
+          // verifier failure is not fatal — the local verdict still stands
+        }
+      }
+
+      const combined = combineLocalIntoAdjudication({ local: localResult, gptVerifier });
+      run.ensemble = combined.ensemble;
+      emit({ type: 'ensemble_member', member: combined.ensemble.members[0] as EnsembleMember });
+      if (combined.ensemble.members[1]) {
+        emit({ type: 'ensemble_member', member: combined.ensemble.members[1] });
+      }
+      emit({ type: 'ensemble_done', result: combined.ensemble });
+
+      // RAG still runs (display-only). No change to existing logic — falls
+      // through to the shared block by reusing the same path below.
+      let rag: RagResult = { neighbors: [], embedding_provider: null, skipped: true,
+        skipReason: 'Local mode: retrieval display-only and currently skipped (M22).' };
+      emit({ type: 'stage_status', stage: 'rag', status: 'skipped', note: rag.skipReason });
+      emit({ type: 'rag_done', result: rag });
+      run.rag = rag;
+
+      emit({ type: 'stage_status', stage: 'adjudicate', status: 'running' });
+      run.adjudication = combined.adjudication;
+      emit({ type: 'adjudicate_done', result: combined.adjudication });
+      emit({ type: 'stage_status', stage: 'adjudicate', status: 'done' });
+      run.fallbackRate = 0;
+      emit({ type: 'stage_status', stage: 'verdict', status: 'done' });
+      return run;
+    }
+    // else: local call failed -> fall through to the M21 VLM-primary block
+  }
+
+  // ----------------------------------------------------------------------
+  // Stage 2 — Perception (M21 VLM-primary; used when local mode is off OR
+  // local mode is on but the server was unreachable).
   //   2A. (primary)   VLM triage via Responses API structured-output.
   //   2B. (verifier)  ONE extra independent call ONLY if borderline.
   //   2C. (auxiliary) HF TB head + general CXR head — best-effort. NOT decision-driving.
