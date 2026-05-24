@@ -1,6 +1,5 @@
 import type {
   Adjudication,
-  CalibrationParams,
   EnsembleMember,
   EnsembleResult,
   PipelineEvent,
@@ -12,108 +11,217 @@ import type {
   Settings,
   Verdict,
 } from '@/lib/types';
-import { applyCalibration, effectiveWeights, fuseLogOdds } from '@/lib/calibration';
-import {
-  ABSTAIN_RULES,
-  ENSEMBLE_WEIGHTS,
-  KNN_K,
-  SCREENING_POLICY,
-  SELF_CONSISTENCY_K,
-} from '@/lib/defaults';
+import { ENSEMBLE_WEIGHTS, KNN_K } from '@/lib/defaults';
 import { deriveCapabilities } from '@/store/settings';
 import { blobToDataURL, clamp, shortId } from '@/lib/utils';
 import { classifyWithFallback, cosineSimilarity, embedWithFallback } from '@/lib/providers/classify';
-import { openaiJSON, openaiStream } from '@/lib/providers/openai';
+import { openaiJSON } from '@/lib/providers/openai';
 import { getEmbeddedCases } from '@/lib/db';
 import { buildGeneralStageConfig, buildTbStageConfig } from './stageConfigs';
+import { QUALITY_PROMPT, QUALITY_SCHEMA } from './prompts';
 import {
-  AdjudicationRaw,
-  buildAdjudicatorPrompt,
-  QUALITY_PROMPT,
-  QUALITY_SCHEMA,
-  VLM_PROMPT,
-  VLM_SCHEMA,
-  VlmResult,
-  vlmToProb,
-} from './prompts';
-import { applySequelaeEscalation } from './sequelaeEscalation';
+  isBorderlineForConsistencyCheck,
+  vlmTriage,
+  type TbScreenResult,
+  type TriageSubmission,
+  type VlmAuditPins,
+  type VlmTriageCall,
+} from './vlmTriage';
+import { applyVlmEscalation } from './vlmEscalation';
 
 type Emit = (e: PipelineEvent) => void;
 
-function popStats(xs: number[]): { mean: number; std: number } {
-  if (xs.length === 0) return { mean: 0, std: 0 };
-  const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
-  const variance = xs.reduce((a, b) => a + (b - mean) ** 2, 0) / xs.length;
-  return { mean, std: Math.sqrt(variance) };
-}
+/**
+ * ORCHESTRATOR — Milestone 21 PIVOT (VLM-PRIMARY, see CASE_STUDY M21 + brief).
+ *
+ * Before M21: a three-member perception ensemble (HF TB head + HF general CXR
+ * head + gpt-5.5 vision self-consistency K=3) feeding a streamed gpt-5.5
+ * adjudicator. M20 confirmed both HF heads are off the free hf-inference router
+ * (HTTP 400 "Model not supported by provider hf-inference"). The deployed app
+ * had no working primary perception.
+ *
+ * After M21: gpt-5.5 vision via the Responses API's structured-output schema
+ * IS the primary perception. The submission carries enough structured signal
+ * (screen_result, uncalibrated scores, mimic features, safety flags) that the
+ * streamed adjudicator stage is no longer the load-bearing decision step — the
+ * VLM submission + a path-specific safety net IS the decision. We keep the
+ * quality gate, the optional HF perception members (when configured), and the
+ * RAG retrieval for the audit trail, but the verdict is built directly from
+ * the submission and the M21 escalation rule.
+ *
+ * Why no self-consistency K-sample here: that pattern was a calibration trick
+ * when the VLM was the THIRD ensemble member. Now that it is the PRIMARY,
+ * correlated self-sampling looks like ensembling but isn't. Instead we fire
+ * ONE deterministic primary call, and for borderline / scar-mimic results,
+ * ONE independent verifier call with different prompt phrasing. If primary
+ * and verifier disagree on screen_result → abstain. See vlmTriage.ts.
+ */
 
 const SEVERITY: Record<Verdict, number> = { no_tb: 0, abstain: 1, tb: 2 };
 const FROM_SEVERITY: Verdict[] = ['no_tb', 'abstain', 'tb'];
-
-/**
- * Screening-biased decision policy. Asymmetric on purpose: a low bar to flag, a high
- * bar to clear. fusedProb includes the CNN once it is live; the vlmSafetyThreshold lets
- * the VLM escalate on its own (catching CNN false negatives) without being able to veto.
- * When fitted calibration params are present, uses their conformal thresholds; otherwise
- * falls back to the hard-coded SCREENING_POLICY constants.
- */
-function screeningPolicy(
-  fusedProb: number,
-  vlmProb: number | null,
-  vlmUncertainty: number,
-  cal: CalibrationParams | null,
-): { verdict: Verdict; reason: string } {
-  const tauLow = cal?.conformal.tauLow ?? SCREENING_POLICY.negClear;
-  const tauHigh = cal?.conformal.tauHigh ?? SCREENING_POLICY.tbFlag;
-  const vlmSafe = cal?.vlmSafetyThreshold ?? SCREENING_POLICY.vlmSafetyThreshold;
-  const flag = fusedProb >= tauHigh || (vlmProb !== null && vlmProb >= vlmSafe);
-  if (flag) {
-    return { verdict: 'tb', reason: `flag (fused ${fusedProb.toFixed(2)} ≥ τ_high ${tauHigh.toFixed(2)} or VLM ≥ ${vlmSafe.toFixed(2)})` };
-  }
-  if (fusedProb < tauLow && vlmUncertainty <= SCREENING_POLICY.maxClearUncertainty) {
-    return { verdict: 'no_tb', reason: '' };
-  }
-  return { verdict: 'abstain', reason: `prob ${fusedProb.toFixed(2)} in [τ_low ${tauLow.toFixed(2)}, τ_high ${tauHigh.toFixed(2)}) band` };
-}
-
 /** Take the more cautious (higher-severity) verdict: tb > abstain > no_tb. */
 function mostCautious(...verdicts: Verdict[]): Verdict {
   return FROM_SEVERITY[Math.max(...verdicts.map((v) => SEVERITY[v] ?? 1))] ?? 'abstain';
 }
 
-/** Deterministic guardrails. Returns the reasons an abstain is forced (empty => allowed to stand). */
-function evaluateAbstainRules(
-  modelConfidence: number,
-  ensemble: EnsembleResult,
-  rag: RagResult,
-): string[] {
-  const reasons: string[] = [];
-  if (modelConfidence < ABSTAIN_RULES.minConfidence) {
-    reasons.push(`model confidence ${modelConfidence} < ${ABSTAIN_RULES.minConfidence}`);
-  }
-  if (ensemble.std > ABSTAIN_RULES.maxEnsembleStd) {
-    reasons.push(`ensemble std ${ensemble.std.toFixed(2)} > ${ABSTAIN_RULES.maxEnsembleStd}`);
-  }
-  const top1 = rag.neighbors[0]?.similarity ?? 1;
-  if (
-    top1 < ABSTAIN_RULES.minTop1Similarity &&
-    ensemble.disagreement > ABSTAIN_RULES.maxDisagreementForLowSim
-  ) {
-    reasons.push(
-      `top-1 retrieval similarity ${top1.toFixed(2)} < ${ABSTAIN_RULES.minTop1Similarity} and ensemble disagreement ${ensemble.disagreement.toFixed(2)} > ${ABSTAIN_RULES.maxDisagreementForLowSim}`,
-    );
-  }
-  if (ensemble.replicateFallbackCount >= ABSTAIN_RULES.maxReplicateFallbacks) {
-    reasons.push(
-      `${ensemble.replicateFallbackCount} stages fell back to Replicate (degraded inference quality)`,
-    );
-  }
-  return reasons;
+/** Map the VLM submission's `tb_screen_result` enum into the project Verdict union. */
+function screenResultToVerdict(r: TbScreenResult): Verdict {
+  if (r === 'screen_positive') return 'tb';
+  if (r === 'screen_negative') return 'no_tb';
+  return 'abstain';
 }
 
 /**
- * Run the full 5-stage pipeline. Emits PipelineEvents live; resolves with the
+ * Confidence rendered to the verdict card. Maps the VLM's `confidence_band` +
+ * `tb_score_uncalibrated` onto a 0..100 value. Deliberately conservative so the
+ * dial never reads "97% confident" on an uncalibrated VLM output.
+ */
+function confidenceFromBand(s: TriageSubmission): number {
+  const base = s.confidence_band === 'high' ? 75 : s.confidence_band === 'medium' ? 55 : 35;
+  // Nudge slightly by how extreme the score is — a 0.95 score in "high" band
+  // earns a few extra points without ever exceeding 90 (we are NOT calibrated).
+  const score = s.tb_score_uncalibrated;
+  const extreme = Math.abs(score - 0.5) * 2; // 0..1
+  return clamp(Math.round(base + extreme * 15), 0, 90);
+}
+
+interface VlmCombineResult {
+  adjudication: Adjudication;
+  /** Synthetic ensemble result so the existing UI Details view still has numbers to show. */
+  ensemble: EnsembleResult;
+}
+
+/**
+ * Build the Adjudication + a synthetic EnsembleResult from a VLM submission and
+ * (optional) verifier submission. Applies:
+ *   1. consistency-check abstain when primary + verifier disagree on screen_result,
+ *   2. the M21 VLM-path escalate-not-clear rule (vlmEscalation.ts),
+ *   3. mostCautious combine across the model's own verdict + the rules above.
+ */
+function combineVlmIntoAdjudication(args: {
+  primary: VlmTriageCall;
+  verifier: VlmTriageCall | null;
+  hfMembers: EnsembleMember[];
+}): VlmCombineResult {
+  const { primary, verifier, hfMembers } = args;
+  const subm = primary.submission;
+
+  const modelVerdict = screenResultToVerdict(subm.tb_screen_result);
+
+  const consistencyRan = verifier !== null;
+  const consistencyDisagreed =
+    verifier !== null &&
+    verifier.submission.tb_screen_result !== subm.tb_screen_result;
+
+  const reasons: string[] = [];
+  let preEscalateVerdict = modelVerdict;
+  if (consistencyDisagreed && verifier) {
+    preEscalateVerdict = 'abstain';
+    reasons.push(
+      `consistency check disagreed (primary=${subm.tb_screen_result}, verifier=${verifier.submission.tb_screen_result})`,
+    );
+  }
+
+  if (subm.refusal_or_limitation) {
+    reasons.push(`VLM limitation: ${subm.refusal_or_limitation}`);
+    preEscalateVerdict = mostCautious(preEscalateVerdict, 'abstain');
+  }
+
+  const vlmEsc = applyVlmEscalation({
+    verdict: preEscalateVerdict,
+    tbScoreUncalibrated: subm.tb_score_uncalibrated,
+    scarShapeScoreUncalibrated: subm.scar_shape_score_uncalibrated,
+    mimicFeatures: subm.mimic_features_present,
+  });
+  if (vlmEsc.escalated && vlmEsc.reason) reasons.push(vlmEsc.reason);
+
+  const finalVerdict = vlmEsc.verdict;
+  const escalated = finalVerdict !== modelVerdict;
+
+  const audit: VlmAuditPins & {
+    consistency_check_ran: boolean;
+    consistency_check_disagreed: boolean;
+  } = {
+    ...primary.audit,
+    consistency_check_ran: consistencyRan,
+    consistency_check_disagreed: consistencyDisagreed,
+  };
+
+  const adjudication: Adjudication = {
+    verdict: finalVerdict,
+    confidence: confidenceFromBand(subm),
+    rationale: escalated
+      ? `[Safety net: ${modelVerdict} → ${finalVerdict}] ${subm.short_rationale}`
+      : subm.short_rationale,
+    abstain_reason:
+      finalVerdict === 'abstain'
+        ? `Refer: ${reasons.join('; ') || 'weak or uncertain evidence'}.`
+        : undefined,
+    auto_abstained: finalVerdict === 'abstain' && modelVerdict !== 'abstain',
+    auto_abstain_reasons: reasons,
+    perception_unavailable: false,
+    perception_path: 'vlm-primary',
+    vlm_audit: audit,
+    screening: {
+      policyVerdict: finalVerdict,
+      modelVerdict,
+      fusedProb: subm.tb_score_uncalibrated,
+      vlmProb: subm.tb_score_uncalibrated,
+      vlmUncertainty: subm.confidence_band === 'low' ? 0.3 : subm.confidence_band === 'medium' ? 0.15 : 0.05,
+    },
+  };
+
+  // Synthetic ensemble: the VLM is one "member" with weight 1 in the UI; the
+  // optional HF members are passed through so the trace still shows whatever
+  // signal we got. Keeps VerdictCard's "Details & stats" useful without
+  // pretending the HF heads contributed to the decision.
+  const vlmMember: EnsembleMember = {
+    id: 'vlm',
+    label: 'GPT-5.5 Vision (primary)',
+    weight: 1,
+    status: 'done',
+    tb_prob: subm.tb_score_uncalibrated,
+    provider_used: 'openai',
+    latency_ms: primary.latencyMs,
+    raw: subm,
+    findings: subm.abnormality_localization,
+    uncertainty: subm.confidence_band === 'low' ? 0.3 : subm.confidence_band === 'medium' ? 0.15 : 0.05,
+    samples: consistencyRan ? 2 : 1,
+  };
+
+  const members: EnsembleMember[] = [vlmMember, ...hfMembers];
+  const returning = members.filter((m) => m.tb_prob !== null);
+  const probs = returning.map((m) => m.tb_prob as number);
+  const disagreement = probs.length > 1 ? Math.max(...probs) - Math.min(...probs) : 0;
+  const mean = probs.length ? probs.reduce((a, b) => a + b, 0) / probs.length : 0;
+  const variance = probs.length
+    ? probs.reduce((a, b) => a + (b - mean) ** 2, 0) / probs.length
+    : 0;
+  const replicateFallbackCount = members.filter((m) => m.provider_used === 'replicate').length;
+  const ensemble: EnsembleResult = {
+    members,
+    weightedScore: subm.tb_score_uncalibrated,
+    std: Math.sqrt(variance),
+    disagreement,
+    replicateFallbackCount,
+  };
+
+  return { adjudication, ensemble };
+}
+
+/**
+ * Run the full pipeline. Emits PipelineEvents live; resolves with the
  * aggregate PipelineRun for persistence + export.
+ *
+ * STAGE FLOW (M21):
+ *   1. quality       — gpt-5.5 vision quality gate (unchanged from M1).
+ *   2. ensemble.vlm  — gpt-5.5 vision primary triage (NEW; structured-output schema).
+ *      + ensemble.vlm — verifier call when borderline (NEW; same stage id, different prompt).
+ *      ensemble.tb / ensemble.general run best-effort when configured; reported in the trace.
+ *   3. rag           — retrieval (unchanged).
+ *   4. adjudicate    — REPLACED. On the VLM path the submission IS the adjudication;
+ *      the stage emits done immediately with the synthesized verdict.
+ *   5. verdict       — finalize.
  */
 export async function runPipeline(
   image: Blob,
@@ -135,8 +243,9 @@ export async function runPipeline(
     providerLog,
     fallbackRate: 0,
     modelVersions: {
-      tb_classifier_hf: settings.overrides.tbClassifierHf,
-      general_cxr_hf: settings.overrides.generalCxrHf,
+      perception_primary: 'gpt-5.5-vision (Responses API, structured-output)',
+      tb_classifier_hf: settings.overrides.tbClassifierHf || '(unset — VLM-primary path)',
+      general_cxr_hf: settings.overrides.generalCxrHf || '(unset)',
       adjudicator: settings.models.adjudicator,
       adjudicator_fallback: settings.models.adjudicatorFallback,
       embedding_endpoint: settings.overrides.embeddingEndpointUrl || '(none)',
@@ -144,20 +253,18 @@ export async function runPipeline(
   };
 
   if (!caps.hasOpenAI) {
-    run.halted = { reason: 'OpenAI API key not set — required for quality gate, VLM, and adjudication.', stage: 'quality' };
+    run.halted = {
+      reason: 'OpenAI API key not set — required for the gpt-5.5 vision primary perception.',
+      stage: 'quality',
+    };
     emit({ type: 'halted', reason: run.halted.reason, stage: 'quality' });
-    return run;
-  }
-  if (!caps.hasHF) {
-    run.halted = { reason: 'Hugging Face token not set — required for the perception ensemble.', stage: 'ensemble.tb' };
-    emit({ type: 'halted', reason: run.halted.reason, stage: 'ensemble.tb' });
     return run;
   }
 
   const dataUrl = await blobToDataURL(image);
 
   // ----------------------------------------------------------------------
-  // Stage 1 — Quality gate (GPT-5.5 vision, no fallback)
+  // Stage 1 — Quality gate (gpt-5.5 vision, no fallback)
   // ----------------------------------------------------------------------
   emit({ type: 'stage_status', stage: 'quality', status: 'running' });
   try {
@@ -188,18 +295,20 @@ export async function runPipeline(
   }
 
   // ----------------------------------------------------------------------
-  // Stage 2 — Perception ensemble (parallel, each HF -> Replicate fallback)
+  // Stage 2 — Perception
+  //   2A. (primary)   VLM triage via Responses API structured-output.
+  //   2B. (verifier)  ONE extra independent call ONLY if borderline.
+  //   2C. (auxiliary) HF TB head + general CXR head — best-effort. NOT decision-driving.
   // ----------------------------------------------------------------------
   const classifyDeps = {
     hfToken: settings.hfToken,
     replicateToken: settings.replicateToken,
   };
 
-  emit({ type: 'stage_status', stage: 'ensemble.tb', status: 'running' });
-  emit({ type: 'stage_status', stage: 'ensemble.general', status: 'running' });
-  emit({ type: 'stage_status', stage: 'ensemble.vlm', status: 'running' });
-
-  const tbMember = (async (): Promise<EnsembleMember> => {
+  // 2C kicks off in parallel with the VLM call — purely advisory in the trace.
+  const tbMemberP: Promise<EnsembleMember | null> = (async () => {
+    if (!caps.hasHF || !settings.overrides.tbClassifierHf.trim()) return null;
+    emit({ type: 'stage_status', stage: 'ensemble.tb', status: 'running' });
     try {
       const r = await classifyWithFallback(image, buildTbStageConfig(settings), {
         ...classifyDeps,
@@ -209,18 +318,36 @@ export async function runPipeline(
         },
       });
       const m: EnsembleMember = {
-        id: 'tb', label: 'TB Classifier', weight: ENSEMBLE_WEIGHTS.tb, status: 'done',
-        tb_prob: r.tb_prob, provider_used: r.provider_used, latency_ms: r.latency_ms, raw: r.raw,
+        id: 'tb',
+        label: 'TB Classifier (auxiliary)',
+        weight: ENSEMBLE_WEIGHTS.tb,
+        status: 'done',
+        tb_prob: r.tb_prob,
+        provider_used: r.provider_used,
+        latency_ms: r.latency_ms,
+        raw: r.raw,
       };
-      providerLog.push({ stage: 'ensemble.tb', provider_used: r.provider_used, latency_ms: r.latency_ms, fell_back: r.provider_used === 'replicate' });
+      providerLog.push({
+        stage: 'ensemble.tb',
+        provider_used: r.provider_used,
+        latency_ms: r.latency_ms,
+        fell_back: r.provider_used === 'replicate',
+      });
       emit({ type: 'ensemble_member', member: m });
       emit({ type: 'stage_status', stage: 'ensemble.tb', status: 'done' });
       return m;
     } catch (err) {
       const message = (err as Error).message;
       const m: EnsembleMember = {
-        id: 'tb', label: 'TB Classifier', weight: ENSEMBLE_WEIGHTS.tb, status: 'error',
-        tb_prob: null, provider_used: null, latency_ms: null, raw: null, error: message,
+        id: 'tb',
+        label: 'TB Classifier (auxiliary)',
+        weight: ENSEMBLE_WEIGHTS.tb,
+        status: 'error',
+        tb_prob: null,
+        provider_used: null,
+        latency_ms: null,
+        raw: null,
+        error: message,
       };
       providerLog.push({ stage: 'ensemble.tb', provider_used: null, latency_ms: null, fell_back: false });
       emit({ type: 'ensemble_member', member: m });
@@ -230,7 +357,9 @@ export async function runPipeline(
     }
   })();
 
-  const generalMember = (async (): Promise<EnsembleMember> => {
+  const generalMemberP: Promise<EnsembleMember | null> = (async () => {
+    if (!caps.hasHF || !settings.overrides.generalCxrHf.trim()) return null;
+    emit({ type: 'stage_status', stage: 'ensemble.general', status: 'running' });
     try {
       const r = await classifyWithFallback(image, buildGeneralStageConfig(settings), {
         ...classifyDeps,
@@ -240,18 +369,36 @@ export async function runPipeline(
         },
       });
       const m: EnsembleMember = {
-        id: 'general', label: 'General CXR', weight: ENSEMBLE_WEIGHTS.general, status: 'done',
-        tb_prob: r.tb_prob, provider_used: r.provider_used, latency_ms: r.latency_ms, raw: r.raw,
+        id: 'general',
+        label: 'General CXR (auxiliary)',
+        weight: ENSEMBLE_WEIGHTS.general,
+        status: 'done',
+        tb_prob: r.tb_prob,
+        provider_used: r.provider_used,
+        latency_ms: r.latency_ms,
+        raw: r.raw,
       };
-      providerLog.push({ stage: 'ensemble.general', provider_used: r.provider_used, latency_ms: r.latency_ms, fell_back: r.provider_used === 'replicate' });
+      providerLog.push({
+        stage: 'ensemble.general',
+        provider_used: r.provider_used,
+        latency_ms: r.latency_ms,
+        fell_back: r.provider_used === 'replicate',
+      });
       emit({ type: 'ensemble_member', member: m });
       emit({ type: 'stage_status', stage: 'ensemble.general', status: 'done' });
       return m;
     } catch (err) {
       const message = (err as Error).message;
       const m: EnsembleMember = {
-        id: 'general', label: 'General CXR', weight: ENSEMBLE_WEIGHTS.general, status: 'error',
-        tb_prob: null, provider_used: null, latency_ms: null, raw: null, error: message,
+        id: 'general',
+        label: 'General CXR (auxiliary)',
+        weight: ENSEMBLE_WEIGHTS.general,
+        status: 'error',
+        tb_prob: null,
+        provider_used: null,
+        latency_ms: null,
+        raw: null,
+        error: message,
       };
       providerLog.push({ stage: 'ensemble.general', provider_used: null, latency_ms: null, fell_back: false });
       emit({ type: 'ensemble_member', member: m });
@@ -261,98 +408,103 @@ export async function runPipeline(
     }
   })();
 
-  const vlmMember = (async (): Promise<EnsembleMember> => {
-    try {
-      // Self-consistency: K independent reads. Mean = calibrated probability, spread = uncertainty.
-      const samples = await Promise.allSettled(
-        Array.from({ length: SELF_CONSISTENCY_K }, () =>
-          openaiJSON<VlmResult>({
-            apiKey: settings.openaiKey,
-            model: settings.models.adjudicator,
-            fallbackModel: settings.models.adjudicatorFallback,
-            prompt: VLM_PROMPT,
-            imageDataUrl: dataUrl,
-            schema: VLM_SCHEMA,
-          }),
-        ),
-      );
-      const ok = samples.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []));
-      if (ok.length === 0) {
-        const rej = samples.find((s) => s.status === 'rejected');
-        throw rej && rej.status === 'rejected' ? (rej.reason as Error) : new Error('all VLM samples failed');
-      }
-      const probs = ok.map((r) => vlmToProb(r.data));
-      const { mean, std } = popStats(probs);
-      const latency = Math.max(...ok.map((r) => r.latencyMs));
-      const m: EnsembleMember = {
-        id: 'vlm', label: 'GPT-5.5 Vision', weight: ENSEMBLE_WEIGHTS.vlm, status: 'done',
-        tb_prob: mean, provider_used: 'openai', latency_ms: latency,
-        raw: ok[0]?.data, findings: ok[0]?.data.findings, uncertainty: std, samples: ok.length,
-      };
-      providerLog.push({ stage: 'ensemble.vlm', provider_used: 'openai', latency_ms: latency, fell_back: ok.some((r) => r.fellBack) });
-      emit({ type: 'ensemble_member', member: m });
-      emit({ type: 'stage_status', stage: 'ensemble.vlm', status: 'done' });
-      return m;
-    } catch (err) {
-      const message = (err as Error).message;
-      const m: EnsembleMember = {
-        id: 'vlm', label: 'GPT-5.5 Vision', weight: ENSEMBLE_WEIGHTS.vlm, status: 'error',
-        tb_prob: null, provider_used: null, latency_ms: null, raw: null, error: message,
-      };
-      providerLog.push({ stage: 'ensemble.vlm', provider_used: null, latency_ms: null, fell_back: false });
-      emit({ type: 'ensemble_member', member: m });
-      emit({ type: 'error', stage: 'ensemble.vlm', message });
-      emit({ type: 'stage_status', stage: 'ensemble.vlm', status: 'error' });
-      return m;
-    }
-  })();
-
-  const members = await Promise.all([tbMember, generalMember, vlmMember]);
-  const returning = members.filter((m) => m.tb_prob !== null);
-  const noPerception = returning.length === 0;
-  const probs = returning.map((m) => m.tb_prob as number);
-  // Use the fitted calibration only when it is complete; an incomplete fit (too few
-  // per-class samples) has meaningless thresholds and must not override the validated
-  // default policy. When null, the legacy arithmetic-mean + SCREENING_POLICY path runs.
-  const cal = settings.calibration && !settings.calibration.conformal.incomplete
-    ? settings.calibration
-    : null;
-  const calProbOf = (m: EnsembleMember): number => {
-    const raw = m.tb_prob as number;
-    const c = cal?.perModel[m.id];
-    return c ? applyCalibration(raw, c) : raw;
-  };
-  let weightedScore: number;
-  if (cal) {
-    const present = returning.map((m) => m.id);
-    const w = effectiveWeights(present, cal.fusion.weights, cal.fusion.mode);
-    weightedScore = fuseLogOdds(
-      returning.map((m) => ({ id: m.id, prob: calProbOf(m) })),
-      w,
-      cal.fusion.mode === 'fitted' ? cal.fusion.bias : 0,
-    );
-  } else {
-    const totalWeight = returning.reduce((a, m) => a + m.weight, 0) || 1;
-    weightedScore = returning.reduce((a, m) => a + m.weight * (m.tb_prob as number), 0) / totalWeight;
+  // 2A. Primary VLM triage. THIS IS THE DECISION-DRIVING CALL.
+  emit({ type: 'stage_status', stage: 'ensemble.vlm', status: 'running' });
+  let primary: VlmTriageCall;
+  try {
+    primary = await vlmTriage({
+      apiKey: settings.openaiKey,
+      primaryModel: settings.models.adjudicator,
+      fallbackModel: settings.models.adjudicatorFallback,
+      imageDataUrl: dataUrl,
+      role: 'primary',
+    });
+    providerLog.push({
+      stage: 'ensemble.vlm',
+      provider_used: 'openai',
+      latency_ms: primary.latencyMs,
+      fell_back: primary.fellBack,
+    });
+    run.modelVersions['vlm_model_used'] = primary.audit.model_id_from_response;
+    run.modelVersions['vlm_prompt_hash'] = primary.audit.prompt_hash;
+    run.modelVersions['vlm_schema_version'] = primary.audit.schema_version;
+    run.modelVersions['vlm_schema_hash'] = primary.audit.schema_hash;
+    run.modelVersions['vlm_image_preprocessing'] = primary.audit.image_preprocessing_version;
+  } catch (err) {
+    const message = (err as Error).message;
+    emit({ type: 'error', stage: 'ensemble.vlm', message });
+    emit({ type: 'stage_status', stage: 'ensemble.vlm', status: 'error' });
+    const adjudication: Adjudication = {
+      verdict: 'abstain',
+      confidence: 0,
+      rationale:
+        'gpt-5.5 vision primary perception failed; defaulting to abstain. The deployed app needs an OpenAI key with vision access.',
+      abstain_reason: message,
+      auto_abstained: true,
+      auto_abstain_reasons: [`vlm primary error: ${message}`],
+      perception_unavailable: true,
+      perception_path: 'perception-unavailable',
+    };
+    run.adjudication = adjudication;
+    emit({ type: 'adjudicate_done', result: adjudication });
+    emit({ type: 'stage_status', stage: 'adjudicate', status: 'error' });
+    return run;
   }
-  const { std } = popStats(probs);
-  const disagreement = probs.length ? Math.max(...probs) - Math.min(...probs) : 0;
-  const replicateFallbackCount = members.filter((m) => m.provider_used === 'replicate').length;
 
-  const ensemble: EnsembleResult = {
-    members, weightedScore, std, disagreement, replicateFallbackCount,
-  };
-  run.ensemble = ensemble;
-  emit({ type: 'ensemble_done', result: ensemble });
+  // 2B. Verifier call (consistency check) ONLY when borderline / scar-mimic.
+  let verifier: VlmTriageCall | null = null;
+  if (isBorderlineForConsistencyCheck(primary.submission)) {
+    emit({
+      type: 'stage_status',
+      stage: 'ensemble.vlm',
+      status: 'running',
+      note: 'borderline result — running consistency check',
+    });
+    try {
+      verifier = await vlmTriage({
+        apiKey: settings.openaiKey,
+        primaryModel: settings.models.adjudicator,
+        fallbackModel: settings.models.adjudicatorFallback,
+        imageDataUrl: dataUrl,
+        role: 'verifier',
+      });
+      providerLog.push({
+        stage: 'ensemble.vlm',
+        provider_used: 'openai',
+        latency_ms: verifier.latencyMs,
+        fell_back: verifier.fellBack,
+      });
+    } catch (err) {
+      // A failed verifier doesn't poison the verdict — it just means the
+      // consistency check didn't run, which is recorded in the audit pins.
+      emit({ type: 'error', stage: 'ensemble.vlm', message: `verifier failed: ${(err as Error).message}` });
+    }
+  }
+  emit({ type: 'stage_status', stage: 'ensemble.vlm', status: 'done' });
+
+  // Wait for the optional HF auxiliary calls to settle so the trace shows them.
+  const [tbAux, generalAux] = await Promise.all([tbMemberP, generalMemberP]);
+  const hfMembers: EnsembleMember[] = [tbAux, generalAux].filter(
+    (m): m is EnsembleMember => m !== null,
+  );
+
+  // Combine: VLM submission + verifier + escalation -> Adjudication.
+  const combined = combineVlmIntoAdjudication({ primary, verifier, hfMembers });
+  run.ensemble = combined.ensemble;
+  emit({ type: 'ensemble_member', member: combined.ensemble.members[0] as EnsembleMember });
+  emit({ type: 'ensemble_done', result: combined.ensemble });
 
   // ----------------------------------------------------------------------
-  // Stage 3 — RAG retrieval (kNN over labeled corpus)
+  // Stage 3 — RAG retrieval (kNN over labeled corpus). Display-only on the VLM path.
   // ----------------------------------------------------------------------
   let rag: RagResult = { neighbors: [], embedding_provider: null, skipped: false };
   if (!caps.hasEmbedding) {
     rag = {
-      neighbors: [], embedding_provider: null, skipped: true,
-      skipReason: 'No embedding provider configured. Set the CXR-Foundation HF Inference Endpoint URL or a Replicate CLIP fallback in Settings to enable retrieval.',
+      neighbors: [],
+      embedding_provider: null,
+      skipped: true,
+      skipReason:
+        'No embedding provider configured. Set the CXR-Foundation HF Inference Endpoint URL or a Replicate CLIP fallback in Settings to enable retrieval.',
     };
     emit({ type: 'stage_status', stage: 'rag', status: 'skipped', note: rag.skipReason });
     emit({ type: 'rag_done', result: rag });
@@ -370,7 +522,12 @@ export async function runPipeline(
           emit({ type: 'stage_status', stage: 'rag', status: 'fallback', note: reason });
         },
       });
-      providerLog.push({ stage: 'rag', provider_used: embed.provider_used, latency_ms: embed.latency_ms, fell_back: embed.provider_used === 'replicate' });
+      providerLog.push({
+        stage: 'rag',
+        provider_used: embed.provider_used,
+        latency_ms: embed.latency_ms,
+        fell_back: embed.provider_used === 'replicate',
+      });
 
       const corpus = await getEmbeddedCases();
       const scored = corpus
@@ -397,113 +554,12 @@ export async function runPipeline(
   run.rag = rag;
 
   // ----------------------------------------------------------------------
-  // Stage 4 — GPT-5.5 adjudicator (single streamed call) + deterministic guardrails
+  // Stage 4 — Adjudication (synthetic on the VLM path; the submission IS the adjudication).
   // ----------------------------------------------------------------------
   emit({ type: 'stage_status', stage: 'adjudicate', status: 'running' });
-  const providersUsed = providerLog.map((p) => `${p.stage}:${p.provider_used ?? 'none'}`);
-  let adjudication: Adjudication;
-  try {
-    const stream = await openaiStream({
-      apiKey: settings.openaiKey,
-      model: settings.models.adjudicator,
-      fallbackModel: settings.models.adjudicatorFallback,
-      prompt: buildAdjudicatorPrompt({ ensemble, rag, providersUsed, replicateFallbackCount }),
-      imageDataUrl: dataUrl,
-      onToken: (t) => emit({ type: 'adjudicate_token', token: t }),
-    });
-
-    const parsed = JSON.parse(
-      stream.text.slice(stream.text.indexOf('{'), stream.text.lastIndexOf('}') + 1),
-    ) as AdjudicationRaw;
-
-    const VALID_VERDICTS: Verdict[] = ['tb', 'no_tb', 'abstain'];
-    const modelVerdict: Verdict = VALID_VERDICTS.includes(parsed.verdict) ? parsed.verdict : 'abstain';
-    const modelConfidence = Number.isFinite(parsed.confidence) ? clamp(parsed.confidence, 0, 100) : 0;
-
-    // Safety-net combine: screening policy (calibrated, sensitivity-first) + deterministic
-    // guardrails + the model's own verdict — take the MOST CAUTIOUS. The model and policy
-    // can escalate; neither can clear a flagged case. (tb > abstain > no_tb)
-    const vlmM = members.find((m) => m.id === 'vlm');
-    const vlmRaw = vlmM?.tb_prob ?? null;
-    const vlmUncertainty = vlmM?.uncertainty ?? 0;
-    // vlmSafetyThreshold is fit on the CALIBRATED VLM prob, so the policy must compare
-    // against the calibrated value. Keep fusedProb and vlmProb consistently both-calibrated
-    // (when cal active) or both-raw (legacy path).
-    const vlmProbForPolicy =
-      cal && vlmRaw !== null && cal.perModel.vlm
-        ? applyCalibration(vlmRaw, cal.perModel.vlm)
-        : vlmRaw;
-    const policy = screeningPolicy(ensemble.weightedScore, vlmProbForPolicy, vlmUncertainty, cal);
-    const guardrailReasons = evaluateAbstainRules(modelConfidence, ensemble, rag);
-
-    if (noPerception) {
-      guardrailReasons.push('no perception model returned a result');
-    }
-    const baseVerdict = mostCautious(
-      policy.verdict,
-      modelVerdict,
-      guardrailReasons.length > 0 ? 'abstain' : 'no_tb',
-      noPerception ? 'abstain' : 'no_tb',
-    );
-    // Sequelae escalate-not-clear (Milestone 19). Today `s_inactive` is always null —
-    // the browser-side feature pathway for Rad-DINO + TXRV is not built (Phase B gap,
-    // documented in CASE_STUDY M19). The interface is locked down so wiring is a
-    // one-line change once those features land.
-    const sInactive: number | null = null;
-    const seqEsc = applySequelaeEscalation({
-      verdict: baseVerdict,
-      tbProb: ensemble.weightedScore,
-      sInactive,
-      borderlineHigh: cal?.conformal.tauHigh,
-    });
-    const finalVerdict = seqEsc.verdict;
-    const reasons = [
-      ...(policy.verdict !== 'no_tb' && policy.reason ? [policy.reason] : []),
-      ...guardrailReasons,
-      ...(seqEsc.escalated && seqEsc.reason ? [seqEsc.reason] : []),
-    ];
-    const escalated = finalVerdict !== modelVerdict;
-    adjudication = {
-      verdict: finalVerdict,
-      confidence: modelConfidence,
-      rationale: escalated
-        ? `[Safety net: ${modelVerdict} → ${finalVerdict}] ${parsed.rationale}`
-        : parsed.rationale,
-      abstain_reason:
-        finalVerdict === 'abstain'
-          ? `Refer: ${reasons.join('; ') || 'weak or uncertain evidence'}.`
-          : parsed.abstain_reason,
-      auto_abstained: finalVerdict === 'abstain' && modelVerdict !== 'abstain',
-      auto_abstain_reasons: reasons,
-      // Honesty contract: when every perception member errored, the verdict is forced
-      // to abstain by the safety net above. Flag the case so VerdictCard renders the
-      // dedicated "configure an API key" state instead of a misleading uncertain card.
-      perception_unavailable: noPerception,
-      screening: {
-        policyVerdict: policy.verdict,
-        modelVerdict: modelVerdict,
-        fusedProb: ensemble.weightedScore,
-        vlmProb: vlmProbForPolicy,
-        vlmUncertainty,
-      },
-    };
-    providerLog.push({ stage: 'adjudicate', provider_used: 'openai', latency_ms: stream.latencyMs, fell_back: stream.fellBack });
-    run.modelVersions['adjudicator_used'] = stream.modelUsed;
-    emit({ type: 'adjudicate_done', result: adjudication });
-    emit({ type: 'stage_status', stage: 'adjudicate', status: 'done' });
-  } catch (err) {
-    const message = (err as Error).message;
-    // Even adjudication failure resolves to a safe abstain rather than a crash.
-    adjudication = {
-      verdict: 'abstain', confidence: 0, rationale: 'Adjudication call failed; defaulting to abstain.',
-      abstain_reason: message, auto_abstained: true, auto_abstain_reasons: [`adjudicator error: ${message}`],
-      perception_unavailable: noPerception,
-    };
-    emit({ type: 'error', stage: 'adjudicate', message });
-    emit({ type: 'stage_status', stage: 'adjudicate', status: 'error' });
-    emit({ type: 'adjudicate_done', result: adjudication });
-  }
-  run.adjudication = adjudication;
+  run.adjudication = combined.adjudication;
+  emit({ type: 'adjudicate_done', result: combined.adjudication });
+  emit({ type: 'stage_status', stage: 'adjudicate', status: 'done' });
 
   // ----------------------------------------------------------------------
   // Stage 5 — finalize: fallback rate + verdict

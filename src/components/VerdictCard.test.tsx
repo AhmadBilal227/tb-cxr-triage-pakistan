@@ -25,6 +25,26 @@ function mockAdjudication(verdict: Verdict): Adjudication {
   };
 }
 
+function mockOnnxAdjudication(verdict: Verdict): Adjudication {
+  return { ...mockAdjudication(verdict), perception_path: 'onnx-primary' };
+}
+
+function mockVlmAdjudication(verdict: Verdict): Adjudication {
+  return {
+    ...mockAdjudication(verdict),
+    perception_path: 'vlm-primary',
+    vlm_audit: {
+      prompt_hash: 'deadbeef',
+      schema_version: 'vlm-triage-v1',
+      schema_hash: 'cafebabe',
+      model_id_from_response: 'gpt-5.5-2026-04-23',
+      image_preprocessing_version: 'browser-passthrough-v1',
+      consistency_check_ran: false,
+      consistency_check_disagreed: false,
+    },
+  };
+}
+
 function mockEnsemble(): EnsembleResult {
   return {
     members: [],
@@ -41,12 +61,18 @@ function mockRag(): RagResult {
 
 const DISCLOSURE_FRAGMENT = 'Higher false-positive rate (~10%) expected on radiographically scar-shaped findings';
 
-describe('VerdictCard scar-FPR disclosure', () => {
+/**
+ * M19 scar-FPR disclosure still renders ON THE ONNX PATH (when the validated
+ * Rad-DINO + TXRV head ran). On the VLM-primary path (today's default) a
+ * DIFFERENT disclosure renders — see the next describe block. Pin both so we
+ * can never silently leak the M19 disclosure onto a VLM-derived verdict.
+ */
+describe('VerdictCard scar-FPR disclosure — ONNX path (Phase B)', () => {
   for (const verdict of ['tb', 'no_tb', 'abstain'] as const) {
-    it(`renders the scar-shape FPR disclosure when verdict=${verdict}`, () => {
+    it(`renders the scar-shape FPR disclosure when verdict=${verdict} AND path=onnx-primary`, () => {
       const html = renderToStaticMarkup(
         <VerdictCard
-          adjudication={mockAdjudication(verdict)}
+          adjudication={mockOnnxAdjudication(verdict)}
           ensemble={mockEnsemble()}
           rag={mockRag()}
           fallbackRate={0}
@@ -62,7 +88,7 @@ describe('VerdictCard scar-FPR disclosure', () => {
   it('includes the test id for downstream a11y/visual hooks', () => {
     const html = renderToStaticMarkup(
       <VerdictCard
-        adjudication={mockAdjudication('no_tb')}
+        adjudication={mockOnnxAdjudication('no_tb')}
         ensemble={mockEnsemble()}
         rag={mockRag()}
         fallbackRate={0}
@@ -70,6 +96,89 @@ describe('VerdictCard scar-FPR disclosure', () => {
       />,
     );
     expect(html).toContain('data-testid="scar-fpr-disclosure"');
+    expect(html).toContain('data-testid="perception-path-indicator"');
+    expect(html).toContain('local ONNX');
+  });
+});
+
+/**
+ * M21 — VLM-primary path disclosure. The today-default. The VLM is uncalibrated,
+ * has not been validated against the project's LODO holdout, and may overreact
+ * to scar-shaped findings; every claim in this disclosure must be defensible
+ * against a hostile reader.
+ */
+describe('VerdictCard VLM-primary disclosure (Milestone 21 default path)', () => {
+  for (const verdict of ['tb', 'no_tb', 'abstain'] as const) {
+    it(`renders the VLM disclosure (NOT the M19 ONNX one) when verdict=${verdict} AND path=vlm-primary`, () => {
+      const html = renderToStaticMarkup(
+        <VerdictCard
+          adjudication={mockVlmAdjudication(verdict)}
+          ensemble={mockEnsemble()}
+          rag={mockRag()}
+          fallbackRate={0}
+          onDisagree={async () => undefined}
+        />,
+      );
+      expect(html).toContain('data-testid="vlm-primary-disclosure"');
+      expect(html).toContain('general-purpose vision-language model');
+      expect(html).toContain('uncalibrated');
+      expect(html).toContain('may miss disease');
+      // The M19 scar-FPR fragment talks about OUR head's measured FPR — must
+      // NOT appear on a VLM verdict (the VLM has no labeled FPR number).
+      expect(html).not.toContain(DISCLOSURE_FRAGMENT);
+      expect(html).not.toContain('data-testid="scar-fpr-disclosure"');
+      // Hostile-reader tone check — no marketing language slipping in.
+      expect(html).not.toMatch(/guarantee|comprehensive|robust/i);
+    });
+  }
+
+  it('also surfaces the deployed-but-inactive ONNX honesty note', () => {
+    const html = renderToStaticMarkup(
+      <VerdictCard
+        adjudication={mockVlmAdjudication('no_tb')}
+        ensemble={mockEnsemble()}
+        rag={mockRag()}
+        fallbackRate={0}
+        onDisagree={async () => undefined}
+      />,
+    );
+    expect(html).toContain('data-testid="onnx-deployed-but-inactive-note"');
+    expect(html).toContain('Phase B gap');
+  });
+
+  it('renders the model id from the Responses API + verifier-state indicator', () => {
+    const adj = mockVlmAdjudication('abstain');
+    if (adj.vlm_audit) {
+      adj.vlm_audit = { ...adj.vlm_audit, consistency_check_ran: true, consistency_check_disagreed: true };
+    }
+    const html = renderToStaticMarkup(
+      <VerdictCard
+        adjudication={adj}
+        ensemble={mockEnsemble()}
+        rag={mockRag()}
+        fallbackRate={0}
+        onDisagree={async () => undefined}
+      />,
+    );
+    expect(html).toContain('data-testid="perception-path-indicator"');
+    expect(html).toContain('gpt-5.5-2026-04-23');
+    expect(html).toContain('unvalidated VLM');
+    expect(html).toContain('verifier ran');
+    expect(html).toContain('verifier disagreed');
+  });
+
+  it('default (no perception_path field) falls back to the VLM disclosure (today is VLM-primary)', () => {
+    const html = renderToStaticMarkup(
+      <VerdictCard
+        adjudication={mockAdjudication('no_tb')}
+        ensemble={mockEnsemble()}
+        rag={mockRag()}
+        fallbackRate={0}
+        onDisagree={async () => undefined}
+      />,
+    );
+    expect(html).toContain('data-testid="vlm-primary-disclosure"');
+    expect(html).not.toContain(DISCLOSURE_FRAGMENT);
   });
 });
 

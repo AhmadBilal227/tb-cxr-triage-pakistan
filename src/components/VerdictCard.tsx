@@ -98,13 +98,7 @@ export function VerdictCard({
         <div className="mt-1.5 font-mono text-[10px] uppercase tracking-wider text-muted">
           radiographic TB screen · not a diagnosis · confirm bacteriologically
         </div>
-        <div
-          className="mt-1 px-1 text-[10px] leading-snug text-muted/80"
-          data-testid="scar-fpr-disclosure"
-        >
-          Higher false-positive rate (~10%) expected on radiographically scar-shaped findings
-          (healed fibrosis, pleural thickening).
-        </div>
+        <PerceptionPathDisclosure adjudication={adjudication} />
       </div>
       {adjudication.verdict === 'no_tb' && (
         <p className="mt-2 rounded-md bg-verdict-uncertain/10 px-3 py-2 text-[11px] leading-snug text-verdict-uncertain">
@@ -199,5 +193,108 @@ function Detail({ k, v }: { k: string; v: string }): JSX.Element {
       <span className="font-mono text-[10px] text-muted">{k}</span>
       <span className="text-offwhite">{v}</span>
     </div>
+  );
+}
+
+/**
+ * Milestone 21 — PATH-SPECIFIC DISCLOSURES.
+ *
+ * The M19 always-on scar-FPR disclosure described our TRAINED ONNX head's
+ * mimic FPR (NIH cross-site Fibrosis/Pleural_Thickening ~10%). That number is
+ * NOT honest to display when the actual perception was gpt-5.5 vision — a
+ * different model with a different failure profile, no labeled validation.
+ * Render the correct disclosure based on `adjudication.perception_path`:
+ *
+ *   - 'vlm-primary'  (today's default): VLM uncalibrated, may miss disease,
+ *                                       may hallucinate, may overreact to scar.
+ *   - 'onnx-primary' (Phase B, future): the M15 validated head, AUROC 0.925
+ *                                       LODO, with the cross-site mimic FPR.
+ *   - 'hf-ensemble'  (legacy):          M1-M20 HF heads when they're alive.
+ *
+ * Also renders a small path indicator (`data-testid="perception-path-indicator"`)
+ * near the verdict so the user can SEE which model produced the result.
+ */
+function PerceptionPathDisclosure({
+  adjudication,
+}: {
+  adjudication: Adjudication;
+}): JSX.Element {
+  const path = adjudication.perception_path ?? 'vlm-primary';
+
+  // ONNX path: the M19 disclosure (our trained head's cross-site mimic FPR).
+  if (path === 'onnx-primary') {
+    return (
+      <>
+        <div
+          className="mt-1 px-1 text-[10px] leading-snug text-muted/80"
+          data-testid="scar-fpr-disclosure"
+        >
+          Higher false-positive rate (~10%) expected on radiographically scar-shaped findings
+          (healed fibrosis, pleural thickening).
+        </div>
+        <div
+          className="mt-1 px-1 font-mono text-[9px] uppercase tracking-wider text-muted/60"
+          data-testid="perception-path-indicator"
+        >
+          perception path: local ONNX (rad-dino + txrv, validated head)
+        </div>
+      </>
+    );
+  }
+
+  // HF legacy ensemble path. Keep the original scar disclosure (the heads were
+  // never validated against the NIH mimic stress test either, so honesty is
+  // similar magnitude — just label the path differently).
+  if (path === 'hf-ensemble') {
+    return (
+      <>
+        <div
+          className="mt-1 px-1 text-[10px] leading-snug text-muted/80"
+          data-testid="scar-fpr-disclosure"
+        >
+          Higher false-positive rate (~10%) expected on radiographically scar-shaped findings
+          (healed fibrosis, pleural thickening).
+        </div>
+        <div
+          className="mt-1 px-1 font-mono text-[9px] uppercase tracking-wider text-muted/60"
+          data-testid="perception-path-indicator"
+        >
+          perception path: hugging face ensemble (legacy)
+        </div>
+      </>
+    );
+  }
+
+  // VLM-primary path (the deployed default today). The disclosure is LONGER
+  // because the model is unvalidated and the user is owed every caveat.
+  const modelId = adjudication.vlm_audit?.model_id_from_response ?? 'gpt-5.5';
+  return (
+    <>
+      <div
+        className="mt-1 px-1 text-[10px] leading-snug text-muted/80"
+        data-testid="vlm-primary-disclosure"
+      >
+        This result is produced by a general-purpose vision-language model (gpt-5.5 vision), not the
+        project's validated Rad-DINO + TorchXRayVision research model. The TB score is uncalibrated
+        and has not been validated to the LODO sensitivity/specificity numbers reported in the case
+        study. The model may miss disease, hallucinate findings, overreact to scar/fibrosis/pleural-
+        thickening, or abstain on image-quality issues. Research triage support only — not diagnosis.
+      </div>
+      <div
+        className="mt-1 px-1 text-[9px] leading-snug text-muted/60"
+        data-testid="onnx-deployed-but-inactive-note"
+      >
+        Local validated ONNX heads (Rad-DINO + TorchXRayVision, AUROC 0.922 LODO) ship with this
+        build but cannot execute without browser-side backbone features (Phase B gap).
+      </div>
+      <div
+        className="mt-1 px-1 font-mono text-[9px] uppercase tracking-wider text-muted/60"
+        data-testid="perception-path-indicator"
+      >
+        perception path: {modelId} (unvalidated VLM)
+        {adjudication.vlm_audit?.consistency_check_ran ? ' · verifier ran' : ''}
+        {adjudication.vlm_audit?.consistency_check_disagreed ? ' · verifier disagreed' : ''}
+      </div>
+    </>
   );
 }

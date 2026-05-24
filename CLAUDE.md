@@ -1,8 +1,16 @@
 # Project: AI-Native TB Chest X-Ray Triage
 
 Frontend-only (Vite + React 18 + TypeScript strict, **no `any`**), BYOK, IndexedDB. Three providers
-called directly from the browser: Hugging Face (primary perception), Replicate (fallback), OpenAI
-`gpt-5.5` (orchestration). Research preview — **not a medical device.**
+called directly from the browser. Research preview — **not a medical device.**
+
+**Perception path as of M21 (2026-05-24):** OpenAI `gpt-5.5` vision via the Responses API's
+structured-output mode IS the PRIMARY perception (see `src/lib/pipeline/vlmTriage.ts`). Hugging
+Face / Replicate classifier heads remain best-effort fallbacks but the free hf-inference router
+no longer hosts `microsoft/rad-dino` or the M1 default TB heads, so on the deployed app today
+they are inert. The local validated ONNX heads in `public/models/` (M19: AUROC 0.922 LODO) are
+on disk but cannot execute in the browser without a feature-extraction backbone (Phase B gap).
+This is the honest tradeoff M21 made: deployability up, measured accuracy down vs the offline
+trained heads.
 
 ## Non-negotiable ethos (carry this into every change)
 - **Report real numbers.** Measure against ground truth (the `/validate` route + `scripts/accuracy-test*.mjs`). Lead with the honest metric (sensitivity is the safety-critical one for a screen), never a flattering one. The project's whole identity is intellectual honesty about model quality.
@@ -12,10 +20,12 @@ called directly from the browser: Hugging Face (primary perception), Replicate (
 - Keep strict TS clean (`npm run build`), tests green (`npm test`), and a11y ≥95.
 
 ## Orientation
-- Contract: `src/lib/types.ts` (`ClassifierResult` = `{ tb_prob, raw, provider_used, latency_ms }`).
-- Providers: `src/lib/providers/` (`classify.ts` = the HF→Replicate fallback seam).
-- Pipeline: `src/lib/pipeline/orchestrator.ts` (5 stages + screening policy + safety-net combine).
-- Calibration: `src/lib/calibration.ts` (temperature/Platt + log-odds fusion + conformal; fit via `/validate` Calibrate).
+- Contract: `src/lib/types.ts` (`ClassifierResult` = `{ tb_prob, raw, provider_used, latency_ms }`; `Adjudication.perception_path` + `vlm_audit` since M21).
+- Providers: `src/lib/providers/` (`classify.ts` = the HF→Replicate fallback seam; `openai.ts` = Responses API including structured-output / json_schema mode used by M21).
+- Pipeline: `src/lib/pipeline/orchestrator.ts` (M21: gpt-5.5 vision PRIMARY via vlmTriage; HF heads auxiliary; safety-net combine via applyVlmEscalation).
+- VLM triage (M21): `src/lib/pipeline/vlmTriage.ts` (the `submit_triage` JSON schema + boring policy prompt + forced-abstain rails + borderline-band predicate) and `src/lib/pipeline/vlmEscalation.ts` (path-specific escalation, SEPARATE 0.5 threshold from the ONNX path's 0.7126 — DO NOT mix).
+- Sequelae escalation (M19, Phase B): `src/lib/pipeline/sequelaeEscalation.ts` — interface only today; consumes `s_inactive` from `public/models/sequelae_head.onnx` once a browser-side feature pathway exists.
+- Calibration: `src/lib/calibration.ts` (temperature/Platt + log-odds fusion + conformal; fit via `/validate` Calibrate). On the VLM path the calibration is bypassed — the VLM score is uncalibrated by definition.
 - Perception training (offline, M4/MPS): `training/` + `docs/superpowers/plans/2026-05-24-tb-classifier-training-T1.md`.
 - Roadmap: `docs/superpowers/plans/2026-05-24-perception-module.md` (the path to ≥90%).
 
