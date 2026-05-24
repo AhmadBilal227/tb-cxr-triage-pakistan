@@ -1,87 +1,16 @@
-import { clamp } from '@/lib/utils';
-
 /**
- * Tolerant output parsers. BYOK means we cannot assume a fixed label vocabulary,
- * so each parser inspects several plausible shapes and degrades gracefully.
+ * Tolerant output parsers for the embedding + (optional) Replicate classifier slot.
+ *
+ * Milestone 23 removed Hugging Face. The two parsers that were specific to the
+ * HF heads (`parseTbProb` over a label/score array, `parseGeneralCxrTbProb`)
+ * were deleted along with the HF provider — the orchestrator no longer routes
+ * through them. What remains is the embedding shape extractor (used by the
+ * Replicate CLIP path for kNN retrieval) and the detection-box extractor (kept
+ * so a future BYO Replicate detection slot can surface bounding boxes through
+ * the existing UI seam).
  */
 
-interface LabelScore {
-  label: string;
-  score: number;
-}
-
-function asLabelScores(raw: unknown): LabelScore[] {
-  if (Array.isArray(raw)) {
-    const out: LabelScore[] = [];
-    for (const item of raw) {
-      if (
-        item &&
-        typeof item === 'object' &&
-        'label' in item &&
-        'score' in item &&
-        typeof (item as LabelScore).score === 'number'
-      ) {
-        out.push({ label: String((item as LabelScore).label), score: (item as LabelScore).score });
-      }
-    }
-    return out;
-  }
-  return [];
-}
-
-const TB_LABEL = /tub|(^|[^a-z])tb([^a-z]|$)|positive|abnormal|^1$/i;
-const NEG_LABEL = /normal|negative|healthy|^0$/i;
-
-/** TB-specific classifier (Stage 2A). Returns probability of TB in [0,1]. */
-export function parseTbProb(raw: unknown): number {
-  const scores = asLabelScores(raw);
-  if (scores.length > 0) {
-    const tb = scores.find((s) => TB_LABEL.test(s.label));
-    if (tb) return clamp(tb.score, 0, 1);
-    const neg = scores.find((s) => NEG_LABEL.test(s.label));
-    if (neg) return clamp(1 - neg.score, 0, 1);
-    // Unknown labels: assume highest-scoring class is the "positive" one only if 2-class.
-    if (scores.length === 2) {
-      const sorted = [...scores].sort((a, b) => b.score - a.score);
-      return clamp(sorted[0]?.score ?? 0, 0, 1);
-    }
-  }
-  // Direct numeric probability.
-  if (typeof raw === 'number') return clamp(raw, 0, 1);
-  if (raw && typeof raw === 'object') {
-    const o = raw as Record<string, unknown>;
-    for (const k of ['tb_prob', 'probability', 'score', 'confidence']) {
-      if (typeof o[k] === 'number') return clamp(o[k] as number, 0, 1);
-    }
-  }
-  return 0;
-}
-
-/**
- * General CXR classifier (Stage 2B). Extracts a TB-related signal from a broader
- * pathology distribution. If no TB-related label exists, returns 0 (no TB signal
- * from this head) rather than fabricating one.
- */
-export function parseGeneralCxrTbProb(raw: unknown): number {
-  const scores = asLabelScores(raw);
-  if (scores.length > 0) {
-    const tb = scores.find((s) => /tubercul/i.test(s.label));
-    if (tb) return clamp(tb.score, 0, 1);
-    // Some CXR heads emit a generic "abnormal"/"finding" class — use as a weak proxy.
-    const abn = scores.find((s) => /abnormal|finding|consolidation|opacity|nodule/i.test(s.label));
-    if (abn) return clamp(abn.score * 0.6, 0, 1); // discounted: not TB-specific
-    return 0;
-  }
-  // YOLOv8 detection style: { boxes: [...] } — presence of relevant detections.
-  if (raw && typeof raw === 'object' && 'boxes' in (raw as object)) {
-    const boxes = (raw as { boxes?: unknown[] }).boxes;
-    if (Array.isArray(boxes) && boxes.length > 0) return 0.4;
-    return 0;
-  }
-  return 0;
-}
-
-/** Extract a YOLOv8 bounding box if the general classifier returned detections. */
+/** Extract a YOLOv8 bounding box if a detection model returned detections. */
 export interface BBox {
   x: number;
   y: number;
@@ -130,7 +59,7 @@ export function parseEmbedding(raw: unknown): number[] {
   if (Array.isArray(raw) && raw.every((x) => typeof x === 'number')) {
     return raw as number[];
   }
-  // Nested [[...]] (HF feature-extraction often returns [seq][dim] or [1][dim])
+  // Nested [[...]] (feature-extraction APIs often return [seq][dim] or [1][dim])
   if (Array.isArray(raw) && Array.isArray(raw[0])) {
     const first = raw[0] as unknown[];
     if (first.every((x) => typeof x === 'number')) return first as number[];

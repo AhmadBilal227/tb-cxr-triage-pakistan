@@ -4,20 +4,29 @@
  * Everything downstream — provider clients, the orchestrator, and every UI card —
  * depends on the normalized shapes defined here. Provider-specific payloads are
  * collapsed into these shapes at the `parseOutput` seam so the orchestrator and UI
- * never see raw HF/Replicate/OpenAI structures.
+ * never see raw Replicate/OpenAI structures.
+ *
+ * Milestone 23 removed Hugging Face from the runtime path entirely (the free
+ * hf-inference router dropped every default classifier we relied on through 2024-
+ * 2025). The validated local-mode FastAPI server is the primary perception when
+ * reachable; gpt-5.5 vision is the deployment-side primary; Replicate stays as an
+ * optional configurable fallback. The HF Python library is still used OFFLINE in
+ * `training/` to load Rad-DINO + TXRV weights from the local HF cache — that is
+ * a file-system read, not a runtime API call, and the frontend has no awareness
+ * of it.
  */
 
 // ---------------------------------------------------------------------------
 // Providers
 // ---------------------------------------------------------------------------
 
-export type Provider = 'hf' | 'replicate' | 'openai' | 'local-triage';
+export type Provider = 'replicate' | 'openai' | 'local-triage';
 
 /** A provider that actually produced a classifier signal (never 'openai' here — GPT cards are tracked separately). */
-export type ClassifierProvider = 'hf' | 'replicate';
+export type ClassifierProvider = 'replicate';
 
 /**
- * The normalized output of any HF->Replicate classifier stage.
+ * The normalized output of any Replicate classifier stage.
  * Spec says `raw: any`; under strict TS we use `unknown` and narrow at the edges.
  */
 export interface ClassifierResult {
@@ -28,45 +37,19 @@ export interface ClassifierResult {
 }
 
 // ---------------------------------------------------------------------------
-// Stage configuration (the classifyWithFallback contract)
-// ---------------------------------------------------------------------------
-
-export interface PrimarySpec {
-  provider: 'hf';
-  model: string;
-  /** Map an opaque HF response into tb_prob in [0,1]. */
-  parseOutput: (raw: unknown) => number;
-}
-
-export interface FallbackSpec {
-  provider: 'replicate';
-  model: string;
-  version: string;
-  /** Map an opaque Replicate prediction.output into tb_prob in [0,1]. */
-  parseOutput: (raw: unknown) => number;
-}
-
-export interface StageConfig {
-  primary: PrimarySpec;
-  /** null => no fallback available for this stage (Replicate token missing or slot unconfigured). */
-  fallback: FallbackSpec | null;
-}
-
-// ---------------------------------------------------------------------------
 // Settings (BYOK + per-stage overrides), persisted to localStorage
 // ---------------------------------------------------------------------------
 
 export interface ModelOverrides {
-  tbClassifierHf: string;
+  /**
+   * Optional Replicate TB classifier (BYO). Empty by default; surfaces as an
+   * "not configured" state in the UI. Only ever runs when both the slug AND
+   * the version hash AND a replicateToken are populated.
+   */
   tbClassifierReplicate: string;
   tbClassifierReplicateVersion: string;
 
-  generalCxrHf: string;
-  generalCxrReplicate: string;
-  generalCxrReplicateVersion: string;
-
-  /** HF Inference Endpoint URL for google/cxr-foundation (not on free serverless). */
-  embeddingEndpointUrl: string;
+  /** Replicate CLIP-style model used for retrieval embeddings. Empty disables RAG. */
   embeddingReplicate: string;
   embeddingReplicateVersion: string;
 }
@@ -82,7 +65,6 @@ export interface OrchestrationModels {
 
 export interface Settings {
   openaiKey: string;
-  hfToken: string;
   replicateToken: string; // optional — empty disables Replicate fallback
   overrides: ModelOverrides;
   models: OrchestrationModels;
@@ -154,6 +136,15 @@ export type StageStatus =
   | 'error'
   | 'skipped';
 
+/**
+ * StageId — pipeline stage identifiers.
+ *
+ * M23 cleanup: `ensemble.tb` and `ensemble.general` previously identified the
+ * two HF classifier stages. With HF removed, the local-mode perception emits
+ * under `ensemble.tb` (so the existing UI trace card keeps working — it carries
+ * the local trained model now), `ensemble.general` is retained as an opt-in
+ * Replicate-only slot, and `ensemble.vlm` is the gpt-5.5 vision stage.
+ */
 export type StageId =
   | 'quality'
   | 'ensemble.tb'
@@ -245,25 +236,23 @@ export interface Adjudication {
    */
   perception_unavailable?: boolean;
   /**
-   * Which perception pathway produced this verdict (Milestone 21). Lets the
-   * VerdictCard render path-specific disclosures: the VLM path is uncalibrated
-   * and unvalidated; the ONNX path (when it becomes available, Phase B) is the
-   * project's validated head and gets its own disclosure language.
+   * Which perception pathway produced this verdict.
    *
-   *   - 'vlm-primary'        : gpt-5.5 vision is the primary perception (M21 default today).
+   *   - 'vlm-primary'        : gpt-5.5 vision is the primary perception (deployed default).
    *   - 'onnx-primary'       : the local Rad-DINO + TXRV head ran (Phase B, not deployed yet).
    *   - 'local-onnx-via-server' : Milestone 22 — the user's M4 ran the full validated
    *                            pipeline (Rad-DINO + TXRV + TBHeadT2 + InactiveSequelaeHead
    *                            under their calibrated temperatures) via the FastAPI server.
    *                            GPT-5.5 vision is the second-opinion verifier on this path.
-   *   - 'hf-ensemble'        : the legacy M1–M20 HF ensemble (kept for fallback compatibility).
    *   - 'perception-unavailable': nothing ran — same flag as `perception_unavailable: true`.
+   *
+   * M23 removed `'hf-ensemble'` from the union — Hugging Face is no longer a runtime
+   * perception path in the app.
    */
   perception_path?:
     | 'vlm-primary'
     | 'onnx-primary'
     | 'local-onnx-via-server'
-    | 'hf-ensemble'
     | 'perception-unavailable';
   /** Audit pins for the VLM path: prompt/schema versions + the model id the API returned. */
   vlm_audit?: {
