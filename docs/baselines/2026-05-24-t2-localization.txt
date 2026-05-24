@@ -1,0 +1,20 @@
+LOCALIZATION FAITHFULNESS — T2 box-evidence map vs tbx11k active-TB boxes
+  head trained on NON-tbx11k sources (box loss never saw these images — true holdout)
+  NOTE: the train sources have ZERO boxes, so the evidence map is learned WITHOUT direct
+  cell supervision in this LODO fold — this is the hardest, most honest localization test.
+  held-out boxed images: 660
+
+  T2 evidence map (n=660):
+    pointing-game hit-rate = 0.865  [95% CI 0.838-0.889]
+    mIoU (top-k, label-free)= 0.604  [95% CI 0.581-0.626]
+    mIoU (fixed tau=0.5)    = 0.503  [95% CI 0.483-0.523]
+
+  RANDOM-attention floor (n=660):
+    pointing-game hit-rate = 0.105  [95% CI 0.082-0.129]
+    mIoU (top-k, label-free)= 0.059  [95% CI 0.052-0.067]
+    mIoU (fixed tau=0.5)    = 0.085  [95% CI 0.080-0.091]
+
+  >>> hit-rate lift over random floor = +0.761
+  >>> mIoU (top-k) lift over random floor = +0.545
+  HONEST CAVEAT: 8x8 grid (pooled from 37x37) is coarse — mIoU is a RELATIVE tracking number
+  vs the random floor, NOT an absolute localization-accuracy claim. 37x37 native grid is the fix.
