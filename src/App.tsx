@@ -279,6 +279,7 @@ export default function App(): JSX.Element {
                 rag={state.rag}
                 fallbackRate={state.run?.fallbackRate ?? 0}
                 onDisagree={onDisagree}
+                onOpenSettings={() => setSettingsOpen(true)}
               />
             </div>
           )}
