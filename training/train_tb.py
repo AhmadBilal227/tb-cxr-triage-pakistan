@@ -6,8 +6,12 @@ and TorchXRayVision features, then an MLP. Loss = label-smoothed BCE with pos_we
 Honest evaluation (panel-corrected):
   - Leave-one-dataset-out (LODO); within the training sources a TRAIN-ONLY validation split
     drives early stopping AND threshold selection (never the held-out fold).
-  - Gate metric = realized sensitivity at the FROZEN (train-derived) threshold on the held-out
-    source, with a Clopper-Pearson 95% CI over the held-out positives.
+  - TWO sensitivities per held-out source, because a fixed threshold does not transfer:
+      (1) COLD-START — realized sensitivity at the FROZEN (train-derived) threshold, no local
+          adaptation. The worst case: deploy at a new site with zero local labels.
+      (2) + LOCAL RECALIBRATION — fit the threshold on a small labeled slice of the held-out
+          site, evaluate on the DISJOINT rest. Simulates the designed deployment step (re-fit
+          per site). Both with Clopper-Pearson 95% CIs. AUC (threshold-free) is reported once.
   - Ablation: fusion-only (CLS+TXRV) vs fusion+patch-attention, to substantiate the attention lift.
 
     python training/train_tb.py
@@ -29,6 +33,7 @@ DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
 TARGET_SENS = 0.92
 LABEL_SMOOTH = 0.05
 BATCH = 256
+CAL_FRAC = 0.3  # fraction of a held-out site used as the local calibration slice (rest = eval)
 
 
 class GatedAttention(nn.Module):
@@ -133,6 +138,33 @@ def threshold_for_sensitivity(y: np.ndarray, p: np.ndarray, target: float = TARG
     return float(thr[idx[0]])
 
 
+def _sens_spec(y: np.ndarray, p: np.ndarray, thr: float):
+    """Sensitivity (+ Clopper-Pearson CI) and specificity at a given threshold."""
+    pred = (p >= thr).astype(int)
+    n_pos, n_neg = int((y == 1).sum()), int((y == 0).sum())
+    tp = int(((pred == 1) & (y == 1)).sum())
+    tn = int(((pred == 0) & (y == 0)).sum())
+    sens = tp / n_pos if n_pos else float("nan")
+    spec = tn / n_neg if n_neg else float("nan")
+    lo, hi = clopper_pearson(tp, n_pos)
+    return sens, lo, hi, spec
+
+
+def _recalibrated(yte: np.ndarray, pte: np.ndarray):
+    """Fit the threshold on a CAL_FRAC labeled slice of the held-out site, evaluate on the
+    disjoint rest. Non-leaky (cal/eval disjoint); models 'deploy with a small local labeled
+    set'. Returns None if the site has too few positives to split meaningfully."""
+    if int((yte == 1).sum()) < 8 or int((yte == 0).sum()) < 8:
+        return None
+    loc = np.arange(len(yte))
+    cal, ev = train_test_split(loc, test_size=1 - CAL_FRAC, stratify=yte, random_state=0)
+    if (yte[cal] == 1).sum() == 0 or (yte[ev] == 1).sum() == 0 or (yte[ev] == 0).sum() == 0:
+        return None
+    thr_local = threshold_for_sensitivity(yte[cal], pte[cal])  # fit on local cal slice
+    sens, lo, hi, spec = _sens_spec(yte[ev], pte[ev], thr_local)
+    return sens, lo, hi, spec, int((yte[ev] == 1).sum())
+
+
 def run_lodo(arrs: dict, y: np.ndarray, src: np.ndarray, use_patches: bool) -> float:
     sources = sorted(set(src.tolist()))
     aucs = []
@@ -146,26 +178,31 @@ def run_lodo(arrs: dict, y: np.ndarray, src: np.ndarray, use_patches: bool) -> f
             continue
         tr, va = train_test_split(tr_all, test_size=0.2, stratify=y[tr_all], random_state=0)
         model = train_head(arrs, y, tr, va, use_patches)
-        pv = predict(model, arrs, va)
-        thr = threshold_for_sensitivity(y[va], pv)  # FROZEN, train-derived
+        thr = threshold_for_sensitivity(y[va], predict(model, arrs, va))  # FROZEN, train-derived
         pte = predict(model, arrs, te)
-        auc = roc_auc_score(y[te], pte)
-        pred = (pte >= thr).astype(int)
-        n_pos = int((y[te] == 1).sum())
-        tp = int(((pred == 1) & (y[te] == 1)).sum())
-        tn = int(((pred == 0) & (y[te] == 0)).sum())
-        sens = tp / n_pos
-        lo, hi = clopper_pearson(tp, n_pos)
-        spec = tn / int((y[te] == 0).sum())
+        yte = y[te]
+        auc = roc_auc_score(yte, pte)
         aucs.append(auc)
-        print(f"  holdout={ho:14s} n={len(te):5d} AUC={auc:.3f}  frozen-thr sens={sens:.3f} "
-              f"[95% CI {lo:.2f}-{hi:.2f}] spec={spec:.3f}")
+        # (1) cold-start: frozen train-derived threshold, no local adaptation
+        s_f, lo_f, hi_f, sp_f = _sens_spec(yte, pte, thr)
+        # (2) with local recalibration: threshold fit on a labeled slice of the site, eval on rest
+        rec = _recalibrated(yte, pte)
+        print(f"  holdout={ho:14s} n={len(te):5d} AUC={auc:.3f}")
+        print(f"      cold-start  (frozen thr)  sens={s_f:.3f} [95% CI {lo_f:.2f}-{hi_f:.2f}] spec={sp_f:.3f}")
+        if rec is not None:
+            s_r, lo_r, hi_r, sp_r, npos_e = rec
+            print(f"      + local recalibration     sens={s_r:.3f} [95% CI {lo_r:.2f}-{hi_r:.2f}] spec={sp_r:.3f}"
+                  f"  (eval n_pos={npos_e})")
+        else:
+            print(f"      + local recalibration     n/a (too few positives to split)")
     mean_auc = float(np.mean(aucs)) if aucs else float("nan")
     print(f"  >>> mean LODO AUC ({tag}) = {mean_auc:.3f}")
     return mean_auc
 
 
 def main() -> None:
+    np.random.seed(0)   # reproducible head training (batch shuffles) + cal/eval splits
+    torch.manual_seed(0)  # ~0.02 AUC run-to-run variance observed unseeded; pin it
     d = np.load(DATA / "features.npz", allow_pickle=True)
     arrs = {"cls": d["cls"].astype("float32"), "patches": d["patches"].astype("float32"), "txrv": d["txrv"].astype("float32")}
     y = d["y"].astype("int64")
