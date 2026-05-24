@@ -33,10 +33,10 @@ export function VerdictCard({
   const [saved, setSaved] = useState(false);
   const meta = VERDICT_META[adjudication.verdict];
 
-  // Honesty contract: when every perception member errored (no API key, all keys
-  // rejected, all models retired from hf-inference), the safety net forces an
-  // abstain — but rendering "UNCERTAIN — REFER" implies the model evaluated the
-  // image and was uncertain. That is a lie. Surface a distinct state instead.
+  // Honesty contract: when every perception path failed (no OpenAI key, local
+  // server unreachable + VLM unavailable), the safety net forces an abstain —
+  // but rendering "UNCERTAIN — REFER" implies the model evaluated the image and
+  // was uncertain. That is a lie. Surface a distinct state instead.
   if (adjudication.perception_unavailable) {
     return (
       <div
@@ -50,9 +50,9 @@ export function VerdictCard({
             <div className="text-base font-semibold text-offwhite">Perception unavailable</div>
             <p className="mt-1 text-[12px] leading-relaxed text-offwhite/80">
               No perception model returned a result, so the app has not evaluated this image. This
-              is not an "uncertain" reading — there is no reading at all. Configure an API key in
-              Settings (Hugging Face token recommended; Replicate fallback optional) and re-drop
-              the image.
+              is not an "uncertain" reading — there is no reading at all. Set an OpenAI API key in
+              Settings (gpt-5.5 vision is the deployed primary), or start the local FastAPI server
+              with local mode enabled, and re-drop the image.
             </p>
             {adjudication.auto_abstain_reasons.length > 0 && (
               <ul className="mt-2 space-y-0.5 font-mono text-[10px] text-muted">
@@ -197,7 +197,7 @@ function Detail({ k, v }: { k: string; v: string }): JSX.Element {
 }
 
 /**
- * Milestone 21 — PATH-SPECIFIC DISCLOSURES.
+ * PATH-SPECIFIC DISCLOSURES.
  *
  * The M19 always-on scar-FPR disclosure described our TRAINED ONNX head's
  * mimic FPR (NIH cross-site Fibrosis/Pleural_Thickening ~10%). That number is
@@ -209,7 +209,11 @@ function Detail({ k, v }: { k: string; v: string }): JSX.Element {
  *                                       may hallucinate, may overreact to scar.
  *   - 'onnx-primary' (Phase B, future): the M15 validated head, AUROC 0.925
  *                                       LODO, with the cross-site mimic FPR.
- *   - 'hf-ensemble'  (legacy):          M1-M20 HF heads when they're alive.
+ *   - 'local-onnx-via-server' (M22):    user's own M4 ran the validated head
+ *                                       through the FastAPI server.
+ *
+ * Milestone 23 removed the `'hf-ensemble'` branch — HF is no longer a runtime
+ * perception path in the app.
  *
  * Also renders a small path indicator (`data-testid="perception-path-indicator"`)
  * near the verdict so the user can SEE which model produced the result.
@@ -275,29 +279,6 @@ function PerceptionPathDisclosure({
           data-testid="perception-path-indicator"
         >
           perception path: local ONNX (rad-dino + txrv, validated head)
-        </div>
-      </>
-    );
-  }
-
-  // HF legacy ensemble path. Keep the original scar disclosure (the heads were
-  // never validated against the NIH mimic stress test either, so honesty is
-  // similar magnitude — just label the path differently).
-  if (path === 'hf-ensemble') {
-    return (
-      <>
-        <div
-          className="mt-1 px-1 text-[10px] leading-snug text-muted/80"
-          data-testid="scar-fpr-disclosure"
-        >
-          Higher false-positive rate (~10%) expected on radiographically scar-shaped findings
-          (healed fibrosis, pleural thickening).
-        </div>
-        <div
-          className="mt-1 px-1 font-mono text-[9px] uppercase tracking-wider text-muted/60"
-          data-testid="perception-path-indicator"
-        >
-          perception path: hugging face ensemble (legacy)
         </div>
       </>
     );

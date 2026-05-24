@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Command as CommandIcon, Settings as SettingsIcon, ShieldAlert } from 'lucide-react';
 import { usePipeline } from '@/hooks/usePipeline';
 import { useSettings } from '@/store/settings';
-import { parseBoxes } from '@/lib/providers/parsers';
 import { embedWithFallback } from '@/lib/providers/classify';
+import type { BBox } from '@/lib/providers/parsers';
 import { addLabeledCase, listHistory } from '@/lib/db';
 import { importLabeledSet, type ImportProgress } from '@/lib/labeledSet';
 import { buildSessionExport, downloadJSON } from '@/lib/export';
@@ -163,12 +163,10 @@ export default function App(): JSX.Element {
     async (label: 0 | 1) => {
       if (!image) return;
       let embedding: number[] | null = null;
-      let provider: 'hf' | 'replicate' | null = null;
+      let provider: 'replicate' | null = null;
       try {
         const e = await embedWithFallback(image.blob, {
-          hfToken: settings.hfToken,
           replicateToken: settings.replicateToken,
-          endpointUrl: settings.overrides.embeddingEndpointUrl,
           replicateModel: settings.overrides.embeddingReplicate,
           replicateVersion: settings.overrides.embeddingReplicateVersion,
         });
@@ -208,10 +206,10 @@ export default function App(): JSX.Element {
     [onNewCase, navigate, onExport],
   );
 
-  const boxes = useMemo(
-    () => (state.members.general?.raw != null ? parseBoxes(state.members.general.raw) : []),
-    [state.members.general],
-  );
+  // M23: detection-box overlay was sourced from the HF general CXR head's raw
+  // output. With that head removed, the overlay is always empty — a future
+  // BYO Replicate detection slot could re-populate it via `parseBoxes`.
+  const boxes = useMemo<BBox[]>(() => [], []);
 
   return (
     <div

@@ -1,5 +1,4 @@
 import type { RunState } from '@/hooks/usePipeline';
-import { parseBoxes } from '@/lib/providers/parsers';
 import { StageCard } from './StageCard';
 import { TbGauge } from './TbGauge';
 import { RagStrip } from './RagStrip';
@@ -7,9 +6,14 @@ import { RagStrip } from './RagStrip';
 /**
  * The Agent Trace panel — the centerpiece. One card per stage, live status,
  * provider badges, latencies, and expandable raw JSON.
+ *
+ * Milestone 23 collapsed the perception "ensemble" to a single-path view: the
+ * local trained model card (active when local mode is on) OR the gpt-5.5 vision
+ * card. The legacy "TB Classifier (HF) w0.5" and "General CXR (HF) w0.2" cards
+ * were removed alongside the HF runtime path.
  */
 export function AgentTrace({ state }: { state: RunState }): JSX.Element {
-  const { stageStatus, members, ensemble, rag, quality } = state;
+  const { stageStatus, members, rag, quality } = state;
   const idle = state.status === 'idle';
 
   return (
@@ -42,53 +46,39 @@ export function AgentTrace({ state }: { state: RunState }): JSX.Element {
             )}
           </StageCard>
 
-          {/* Stage 2 — Perception ensemble */}
-          <SectionLabel>2 · Perception Ensemble</SectionLabel>
+          {/* Stage 2 — Perception */}
+          <SectionLabel>2 · Perception</SectionLabel>
+
+          {/* Local trained-model card — only rendered when local mode actually
+              produced a member. Carries the validated 0.922-AUROC tb_prob. */}
+          {members.tb && (
+            <StageCard
+              title="Local validated head"
+              status={stageStatus['ensemble.tb']}
+              provider={members.tb.provider_used ?? null}
+              latencyMs={members.tb.latency_ms ?? null}
+              fellBack={state.fallbacks['ensemble.tb']}
+              error={members.tb.error ?? state.errors['ensemble.tb']}
+              note={state.stageNotes['ensemble.tb']}
+              raw={members.tb.raw}
+            >
+              <TbGauge value={members.tb.tb_prob ?? null} label="tb_prob (calibrated)" />
+            </StageCard>
+          )}
 
           <StageCard
-            title="TB Classifier · w0.5"
-            status={stageStatus['ensemble.tb']}
-            provider={members.tb?.provider_used ?? null}
-            latencyMs={members.tb?.latency_ms ?? null}
-            fellBack={state.fallbacks['ensemble.tb']}
-            error={members.tb?.error ?? state.errors['ensemble.tb']}
-            note={state.stageNotes['ensemble.tb']}
-            raw={members.tb?.raw}
-          >
-            <TbGauge value={members.tb?.tb_prob ?? null} />
-          </StageCard>
-
-          <StageCard
-            title="General CXR · w0.2"
-            status={stageStatus['ensemble.general']}
-            provider={members.general?.provider_used ?? null}
-            latencyMs={members.general?.latency_ms ?? null}
-            fellBack={state.fallbacks['ensemble.general']}
-            error={members.general?.error ?? state.errors['ensemble.general']}
-            note={state.stageNotes['ensemble.general']}
-            raw={members.general?.raw}
-          >
-            <TbGauge value={members.general?.tb_prob ?? null} />
-            {members.general?.raw != null && parseBoxes(members.general.raw).length > 0 && (
-              <p className="mt-1 text-[10px] text-provider-openai">
-                {parseBoxes(members.general.raw).length} detection box(es) — overlaid on image
-              </p>
-            )}
-          </StageCard>
-
-          <StageCard
-            title="GPT-5.5 Vision · w0.3"
+            title="GPT-5.5 Vision"
             status={stageStatus['ensemble.vlm']}
             provider={members.vlm?.provider_used ?? null}
             latencyMs={members.vlm?.latency_ms ?? null}
             error={members.vlm?.error ?? state.errors['ensemble.vlm']}
+            note={state.stageNotes['ensemble.vlm']}
             raw={members.vlm?.raw}
           >
-            <TbGauge value={members.vlm?.tb_prob ?? null} label="tb_prob (mean of reads)" />
-            {members.vlm?.samples != null && (
+            <TbGauge value={members.vlm?.tb_prob ?? null} label="tb_score (uncalibrated)" />
+            {members.vlm?.samples != null && members.vlm.samples > 1 && (
               <p className="mt-1 font-mono text-[10px] text-muted">
-                self-consistency: {members.vlm.samples} reads · spread{' '}
-                {members.vlm.uncertainty?.toFixed(3) ?? '—'}
+                verifier ran · spread {members.vlm.uncertainty?.toFixed(3) ?? '—'}
               </p>
             )}
             {members.vlm?.findings && members.vlm.findings.length > 0 && (
@@ -99,16 +89,6 @@ export function AgentTrace({ state }: { state: RunState }): JSX.Element {
               </ul>
             )}
           </StageCard>
-
-          {ensemble && (
-            <div className="rounded-lg border border-border bg-surface-2 p-3 text-[11px]">
-              <div className="mb-2 font-mono uppercase tracking-wide text-muted">Ensemble vote</div>
-              <Row k="weighted_score" v={ensemble.weightedScore.toFixed(3)} />
-              <Row k="std" v={ensemble.std.toFixed(3)} />
-              <Row k="disagreement" v={ensemble.disagreement.toFixed(3)} />
-              <Row k="replicate_fallbacks" v={String(ensemble.replicateFallbackCount)} />
-            </div>
-          )}
 
           {/* Stage 3 — RAG */}
           <SectionLabel>3 · Retrieval (kNN)</SectionLabel>

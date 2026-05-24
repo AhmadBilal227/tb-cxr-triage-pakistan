@@ -2,7 +2,6 @@ import type { Provider } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
 const LABELS: Record<Provider, string> = {
-  hf: 'HF',
   replicate: 'Replicate',
   openai: 'OpenAI',
   'local-triage': 'Local',
@@ -11,11 +10,10 @@ const LABELS: Record<Provider, string> = {
 // Fills/borders keep the brand color; text uses brighter on-dark variants so 10px
 // badge text clears WCAG AA (4.5:1) on the dark surface.
 const STYLES: Record<Provider, string> = {
-  hf: 'bg-provider-hf/15 text-[#4ADE80] border-provider-hf/50',
   replicate: 'bg-provider-replicate/15 text-[#FBBF24] border-provider-replicate/50',
   openai: 'bg-provider-openai/15 text-[#A5B4FC] border-provider-openai/50',
   // M22 local-mode: neutral muted-blue badge (no brand to invoke). Stays
-  // distinguishable from the three remote providers.
+  // distinguishable from the remote providers.
   'local-triage': 'bg-[#1e293b]/40 text-[#94A3B8] border-[#475569]/50',
 };
 

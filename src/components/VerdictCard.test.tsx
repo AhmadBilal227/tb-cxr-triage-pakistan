@@ -218,7 +218,9 @@ describe('VerdictCard perception-unavailable state', () => {
     );
     expect(html).toContain('data-testid="verdict-perception-unavailable"');
     expect(html).toContain('Perception unavailable');
-    expect(html).toContain('Configure an API key in Settings');
+    // M23 — the copy now points at OpenAI / local mode instead of HF + Replicate.
+    expect(html).toContain('Set an OpenAI API key in Settings');
+    expect(html).toContain('local FastAPI server');
     // The fake "UNCERTAIN — REFER" headline MUST NOT appear when this flag is set.
     expect(html).not.toContain('UNCERTAIN');
     // The misleading scar-FPR disclosure must also not appear: nothing was measured.
