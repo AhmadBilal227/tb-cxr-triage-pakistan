@@ -11,11 +11,27 @@ export const DEFAULT_SETTINGS: Settings = {
   hfToken: '',
   replicateToken: '',
   overrides: {
-    tbClassifierHf: 'Owos/tb-classifier',
+    // 2026-05-24 (M20): Owos/tb-classifier and keremberke/yolov8m-chest-xray-classification
+    // were BOTH retired from the free hf-inference router (HTTP 400 "Model not supported by
+    // provider hf-inference" even with a valid token — reproduced live during M20). They are
+    // still browsable on the Hub but no longer deployed for serverless inference.
+    //
+    // The TB-specific slot is left BLANK by design: a sweep of TB-tagged classifiers on the
+    // Hub (sukhmani1303/tuberculosis-vit-model, runaksh/chest_xray_tuberculosis_detection)
+    // showed none currently deployed by hf-inference. BYOK: paste a working slug, or
+    // configure a Replicate fallback (see Settings → Model overrides). The UI surfaces the
+    // unconfigured state explicitly per the BYOK contract.
+    tbClassifierHf: '',
     tbClassifierReplicate: '',
     tbClassifierReplicateVersion: '',
 
-    generalCxrHf: 'keremberke/yolov8m-chest-xray-classification',
+    // The general-CXR slot points at the most-downloaded hf-inference-LIVE chest-xray
+    // classifier (verified HTTP 200 on the router with a small PNG, 2026-05-24). It is a
+    // CheXpert-fine-tuned ViT producing 5 labels (Cardiomegaly/Edema/Consolidation/Pneumonia/
+    // No Finding). The TB-specific signal is intentionally null — `parseGeneralCxrTbProb`
+    // returns 0 because none of those labels matches the TB/abnormality regex, which is the
+    // honest behavior: this head provides no TB signal on its own.
+    generalCxrHf: 'codewithdark/vit-chest-xray',
     generalCxrReplicate: '',
     generalCxrReplicateVersion: '',
 
