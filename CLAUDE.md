@@ -26,3 +26,11 @@ list at the bottom). An entry states: what I set out to do, the key decisions an
 **measured result with real numbers**, and what I learned. Match the existing voice (reflective, honest,
 portfolio-grade — not a dry changelog). Never overwrite history; only append. If a later result
 contradicts an earlier claim, record the correction rather than editing the past entry.
+
+## REQUIRED: maintain the drift log
+`docs/EXPERIMENT_LOG.md` is the expected-vs-actual scoreboard + drift tripwires (catches the moment we
+diverge from correct patterns). **After every training run or material pipeline change, append a row to
+§C**: what changed, the number you EXPECTED *before* running, the ACTUAL, a drift flag against §B, and the
+decision. If any §B trigger fires (LODO AUROC jump >+0.05, worst-fold sensitivity drop, sensitivity rising
+*with* site-leak/falling localization, permuted-label LODO ≥0.60, a knob tuned on the LODO test folds, or a
+doc claim exceeding the evidence) — STOP, investigate, and record the outcome before trusting the number.
