@@ -29,6 +29,9 @@ export type ProviderStatusState =
   | 'model-unsupported' // 400/410 on hf-inference: model retired from router
   | 'rate-limited' // 429
   | 'network' // CORS / DNS / TLS / abort
+  | 'connection-refused' // M22 local-triage: server not running (fetch failed)
+  | 'server-error' // M22 local-triage: 5xx from /triage
+  | 'schema-error' // M22 local-triage: response shape didn't match TriageResult
   | 'other-error'; // anything else (5xx, 4xx not above, parse error)
 
 export interface ProviderStatus {
@@ -47,6 +50,7 @@ let state: Record<Provider, ProviderStatus> = {
   hf: { ...INITIAL_STATUS },
   replicate: { ...INITIAL_STATUS },
   openai: { ...INITIAL_STATUS },
+  'local-triage': { ...INITIAL_STATUS },
 };
 
 const listeners = new Set<Listener>();
@@ -74,6 +78,7 @@ export const providerStatusStore = {
       hf: { ...INITIAL_STATUS },
       replicate: { ...INITIAL_STATUS },
       openai: { ...INITIAL_STATUS },
+      'local-triage': { ...INITIAL_STATUS },
     };
     emit();
   },

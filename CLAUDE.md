@@ -3,14 +3,30 @@
 Frontend-only (Vite + React 18 + TypeScript strict, **no `any`**), BYOK, IndexedDB. Three providers
 called directly from the browser. Research preview — **not a medical device.**
 
-**Perception path as of M21 (2026-05-24):** OpenAI `gpt-5.5` vision via the Responses API's
-structured-output mode IS the PRIMARY perception (see `src/lib/pipeline/vlmTriage.ts`). Hugging
-Face / Replicate classifier heads remain best-effort fallbacks but the free hf-inference router
-no longer hosts `microsoft/rad-dino` or the M1 default TB heads, so on the deployed app today
-they are inert. The local validated ONNX heads in `public/models/` (M19: AUROC 0.922 LODO) are
-on disk but cannot execute in the browser without a feature-extraction backbone (Phase B gap).
-This is the honest tradeoff M21 made: deployability up, measured accuracy down vs the offline
-trained heads.
+**Perception path as of M22 (2026-05-24):** TWO paths now, chosen at runtime by `settings.localMode`.
+
+- **LOCAL MODE (M22, primary on the user's machine):** when `settings.localMode === true` AND the FastAPI
+  server at `settings.localServerUrl` (default `http://localhost:8000`) is reachable, the **validated
+  pipeline** runs (Rad-DINO + TorchXRayVision + `TBHeadT2` + `InactiveSequelaeHead` under their fitted
+  calibration constants from `data/tb_threshold_t2.json` + `data/tb_inactive_meta.json`). `tb_prob`
+  comes back **calibrated under T**; the verdict is decided at the validated `thr_at_95sens=0.6105`;
+  the M19 `applySequelaeEscalation` consumes `s_inactive`; gpt-5.5 vision is reduced to a BORDERLINE
+  second-opinion verifier that fires only on `tb_prob ∈ [0.35, 0.65]` OR `s_inactive ≥ 0.7126`, and
+  forces ABSTAIN on disagreement (never overrides a confident verdict). Single-source-of-truth Python
+  module: `training/triage_core.py`. CORS narrow (localhost:5173 + 127.0.0.1:5173 only).
+  `Adjudication.perception_path = 'local-onnx-via-server'`.
+
+- **VLM-PRIMARY (M21, deployed-app fallback):** the deployed Netlify app cannot reach a user's
+  localhost, so it stays on the M21 path: OpenAI `gpt-5.5` vision via the Responses API's
+  structured-output mode IS the primary perception (see `src/lib/pipeline/vlmTriage.ts`). Hugging
+  Face / Replicate classifier heads remain best-effort fallbacks but the free hf-inference router no
+  longer hosts `microsoft/rad-dino` or the M1 default TB heads, so on the deployed app today they
+  are inert. The local validated ONNX heads in `public/models/` (M19: AUROC 0.922 LODO) are on disk
+  but cannot execute in the browser without a feature-extraction backbone (Phase B gap).
+
+The orchestrator falls through from LOCAL to VLM-PRIMARY if the local server is unreachable, so a
+user who toggles "Local mode" but forgets to start the server still gets a usable run (banner from
+`providerStatusStore` + the M21 disclosure unchanged).
 
 ## Non-negotiable ethos (carry this into every change)
 - **Report real numbers.** Measure against ground truth (the `/validate` route + `scripts/accuracy-test*.mjs`). Lead with the honest metric (sensitivity is the safety-critical one for a screen), never a flattering one. The project's whole identity is intellectual honesty about model quality.
@@ -20,14 +36,24 @@ trained heads.
 - Keep strict TS clean (`npm run build`), tests green (`npm test`), and a11y ≥95.
 
 ## Orientation
-- Contract: `src/lib/types.ts` (`ClassifierResult` = `{ tb_prob, raw, provider_used, latency_ms }`; `Adjudication.perception_path` + `vlm_audit` since M21).
-- Providers: `src/lib/providers/` (`classify.ts` = the HF→Replicate fallback seam; `openai.ts` = Responses API including structured-output / json_schema mode used by M21).
-- Pipeline: `src/lib/pipeline/orchestrator.ts` (M21: gpt-5.5 vision PRIMARY via vlmTriage; HF heads auxiliary; safety-net combine via applyVlmEscalation).
-- VLM triage (M21): `src/lib/pipeline/vlmTriage.ts` (the `submit_triage` JSON schema + boring policy prompt + forced-abstain rails + borderline-band predicate) and `src/lib/pipeline/vlmEscalation.ts` (path-specific escalation, SEPARATE 0.5 threshold from the ONNX path's 0.7126 — DO NOT mix).
-- Sequelae escalation (M19, Phase B): `src/lib/pipeline/sequelaeEscalation.ts` — interface only today; consumes `s_inactive` from `public/models/sequelae_head.onnx` once a browser-side feature pathway exists.
-- Calibration: `src/lib/calibration.ts` (temperature/Platt + log-odds fusion + conformal; fit via `/validate` Calibrate). On the VLM path the calibration is bypassed — the VLM score is uncalibrated by definition.
+- Contract: `src/lib/types.ts` (`ClassifierResult` = `{ tb_prob, raw, provider_used, latency_ms }`; `Adjudication.perception_path` extends to `'local-onnx-via-server' | 'vlm-primary' | 'onnx-primary' | 'hf-ensemble' | 'perception-unavailable'` since M22; `Settings.localMode` + `localServerUrl` since M22).
+- Providers: `src/lib/providers/` (`classify.ts` = HF→Replicate fallback seam; `openai.ts` = Responses API including structured-output / json_schema; **`localTriage.ts` (M22)** = POST `/triage` to the local FastAPI server with four-way error tagging in `providerStatusStore`).
+- Pipeline: `src/lib/pipeline/orchestrator.ts` — M22: when `settings.localMode === true` AND the local server is reachable, `localTriage` IS the primary perception and gpt-5.5 vision is a BORDERLINE verifier (consistency-check disagreement forces ABSTAIN). Otherwise M21 VLM-primary path runs unchanged.
+- Local triage core (M22, server-side): `training/triage_core.py` (single source of truth — `TriageEngine` warm-loaded once, calibration constants READ from JSON not pasted, preprocessing IMPORTED from `extract_features.py` not paraphrased), `training/triage_cli.py` (--human / --json / --include-gpt), `training/server.py` (FastAPI, narrow CORS).
+- VLM triage (M21, deployed-app fallback): `src/lib/pipeline/vlmTriage.ts` (`submit_triage` schema + boring policy prompt + forced-abstain rails + borderline-band predicate) and `src/lib/pipeline/vlmEscalation.ts` (path-specific escalation, SEPARATE 0.5 threshold from the M19 ONNX 0.7126 — DO NOT mix).
+- Sequelae escalation (M19): `src/lib/pipeline/sequelaeEscalation.ts` — pure rule, consumed on the M22 local-mode path now that `s_inactive` is produced by the local server. (Browser-direct ONNX still gated on Phase B feature pathway.)
+- Calibration: `src/lib/calibration.ts` (temperature/Platt + log-odds fusion + conformal; fit via `/validate` Calibrate). On the M21 VLM-primary path it is bypassed (the VLM score is uncalibrated). On the M22 local-mode path the head's `tb_prob` is ALREADY calibrated under T server-side and the verdict uses the validated `thr_at_95sens=0.6105`.
 - Perception training (offline, M4/MPS): `training/` + `docs/superpowers/plans/2026-05-24-tb-classifier-training-T1.md`.
 - Roadmap: `docs/superpowers/plans/2026-05-24-perception-module.md` (the path to ≥90%).
+
+**M22 run commands (local mode):**
+```sh
+PYTORCH_ENABLE_MPS_FALLBACK=1 HF_HUB_OFFLINE=1 \
+  training/.venv/bin/python -m uvicorn training.server:app --port 8000
+# in another terminal:
+npm run dev
+# then in the browser: Settings → toggle "Local mode" ON
+```
 
 ## REQUIRED: maintain the case study
 `docs/CASE_STUDY.md` is a first-person engineering narrative kept for the user's portfolio.
