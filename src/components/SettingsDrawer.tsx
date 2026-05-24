@@ -1,10 +1,77 @@
 import { useState, type ReactNode } from 'react';
-import { AlertTriangle, ChevronRight, KeyRound } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronRight, KeyRound, MinusCircle, XCircle } from 'lucide-react';
 import { Dialog, DrawerContent, DialogTitle } from './ui/dialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
 import { Button } from './ui/button';
 import { settingsStore, useSettings, deriveCapabilities } from '@/store/settings';
+import { useProviderStatus, type ProviderStatus } from '@/store/providerStatus';
+import type { Provider } from '@/lib/types';
 import { cn } from '@/lib/utils';
+
+/**
+ * Tiny per-provider status indicator.
+ *
+ * Shows nothing while the provider has never been called. Once it has been
+ * called (or short-circuited by missing config), reports the LAST result so
+ * the user can see WHICH key is the actual problem without DevTools.
+ *
+ * Status text is stable across runs so tests can match on it; the human
+ * reason carried in `status.note` is the actionable detail.
+ */
+function ProviderStatusBadge({
+  provider,
+  hasKey,
+  status,
+}: {
+  provider: Provider;
+  hasKey: boolean;
+  status: ProviderStatus;
+}): JSX.Element | null {
+  // If the provider has never been called AND no key is set, the no-keys
+  // banner + the regular "no token" hint already cover this — keep the
+  // settings page calm.
+  if (status.state === 'unknown' && !hasKey) return null;
+  if (status.state === 'unknown' && hasKey) {
+    return (
+      <span
+        data-testid={`provider-status-${provider}`}
+        className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-muted"
+      >
+        <MinusCircle className="h-3 w-3" /> {provider}: configured · not yet called
+      </span>
+    );
+  }
+  if (status.state === 'not-configured') {
+    return (
+      <span
+        data-testid={`provider-status-${provider}`}
+        className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-muted"
+      >
+        <MinusCircle className="h-3 w-3" /> {provider}: not configured
+      </span>
+    );
+  }
+  if (status.state === 'ok') {
+    return (
+      <span
+        data-testid={`provider-status-${provider}`}
+        className="inline-flex items-center gap-1 rounded-md border border-verdict-clear/40 bg-verdict-clear/10 px-1.5 py-0.5 font-mono text-[10px] text-verdict-clear"
+      >
+        <CheckCircle2 className="h-3 w-3" /> {provider}: ok{status.note ? ` · ${status.note}` : ''}
+      </span>
+    );
+  }
+  // Any failure tag — colorize uniformly red, surface the note for action.
+  return (
+    <span
+      data-testid={`provider-status-${provider}`}
+      className="inline-flex items-center gap-1 rounded-md border border-verdict-tb/40 bg-verdict-tb/10 px-1.5 py-0.5 font-mono text-[10px] text-verdict-tb"
+    >
+      <XCircle className="h-3 w-3" /> {provider}: last call {status.state}
+      {status.note ? ` · ${status.note}` : ''}
+    </span>
+  );
+}
 
 function Field({
   label,
@@ -47,6 +114,7 @@ export function SettingsDrawer({
 }): JSX.Element {
   const s = useSettings();
   const caps = deriveCapabilities(s);
+  const providerStatus = useProviderStatus();
   const [overridesOpen, setOverridesOpen] = useState(false);
 
   return (
@@ -64,29 +132,38 @@ export function SettingsDrawer({
           </div>
 
           <div className="space-y-3">
-            <Field
-              label="OpenAI API key"
-              type="password"
-              value={s.openaiKey}
-              onChange={(v) => settingsStore.set({ openaiKey: v })}
-              placeholder="sk-..."
-              hint="Used for quality gate, VLM read, and adjudication (orchestration only)."
-            />
-            <Field
-              label="Hugging Face token"
-              type="password"
-              value={s.hfToken}
-              onChange={(v) => settingsStore.set({ hfToken: v })}
-              placeholder="hf_..."
-              hint="Primary perception layer (serverless Inference API)."
-            />
-            <Field
-              label="Replicate API token (optional)"
-              type="password"
-              value={s.replicateToken}
-              onChange={(v) => settingsStore.set({ replicateToken: v })}
-              placeholder="r8_..."
-            />
+            <div className="space-y-1">
+              <Field
+                label="OpenAI API key"
+                type="password"
+                value={s.openaiKey}
+                onChange={(v) => settingsStore.set({ openaiKey: v })}
+                placeholder="sk-..."
+                hint="Used for quality gate, VLM read, and adjudication (orchestration only)."
+              />
+              <ProviderStatusBadge provider="openai" hasKey={caps.hasOpenAI} status={providerStatus.openai} />
+            </div>
+            <div className="space-y-1">
+              <Field
+                label="Hugging Face token"
+                type="password"
+                value={s.hfToken}
+                onChange={(v) => settingsStore.set({ hfToken: v })}
+                placeholder="hf_..."
+                hint="Primary perception layer (serverless Inference API). Many TB models have been retired from the hf-inference router — set a working slug in Model overrides if your verdict shows 'model not available'."
+              />
+              <ProviderStatusBadge provider="hf" hasKey={caps.hasHF} status={providerStatus.hf} />
+            </div>
+            <div className="space-y-1">
+              <Field
+                label="Replicate API token (optional)"
+                type="password"
+                value={s.replicateToken}
+                onChange={(v) => settingsStore.set({ replicateToken: v })}
+                placeholder="r8_..."
+              />
+              <ProviderStatusBadge provider="replicate" hasKey={caps.hasReplicate} status={providerStatus.replicate} />
+            </div>
             {!caps.hasReplicate && (
               <div className="flex items-start gap-2 rounded-md border border-border bg-surface-2 p-2 text-[10px] text-muted">
                 <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-provider-replicate" />

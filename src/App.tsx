@@ -11,6 +11,7 @@ import { buildSessionExport, downloadJSON } from '@/lib/export';
 import type { CaseHistoryRecord } from '@/lib/types';
 
 import { SafetyBanner } from '@/components/SafetyBanner';
+import { NoKeysBanner } from '@/components/NoKeysBanner';
 import { FirstUseModal } from '@/components/FirstUseModal';
 import { LeftRail } from '@/components/LeftRail';
 import { DropCanvas, type SampleEntry } from '@/components/DropCanvas';
@@ -222,6 +223,7 @@ export default function App(): JSX.Element {
       onDragLeave={() => setDragging(false)}
       onDrop={onDrop}
     >
+      <NoKeysBanner onOpenSettings={() => setSettingsOpen(true)} />
       <SafetyBanner />
       <FirstUseModal />
 

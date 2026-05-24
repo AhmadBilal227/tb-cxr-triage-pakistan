@@ -1,0 +1,39 @@
+import { KeyRound } from 'lucide-react';
+import { Button } from './ui/button';
+import { useSettings, deriveCapabilities } from '@/store/settings';
+
+/**
+ * BYOK contract banner.
+ *
+ * Surfaces a calm, top-of-app message when the user has NO provider key set
+ * (no OpenAI, no HF, no Replicate). Without this banner, a fresh visitor hits
+ * the perception pipeline, sees nothing happen visibly, and has no path to
+ * recovery short of opening DevTools — exactly the failure mode observed in
+ * the production deploy at tb-triage-research.netlify.app on 2026-05-24.
+ *
+ * Reuses the existing surface tone (subtle, monospaced, no emoji). Returns
+ * null when at least one key is set, so it disappears the moment the user
+ * configures something.
+ */
+export function NoKeysBanner({ onOpenSettings }: { onOpenSettings: () => void }): JSX.Element | null {
+  const settings = useSettings();
+  const caps = deriveCapabilities(settings);
+  const hasAny = caps.hasOpenAI || caps.hasHF || caps.hasReplicate;
+  if (hasAny) return null;
+  return (
+    <div
+      role="status"
+      data-testid="no-keys-banner"
+      className="flex items-center justify-center gap-3 border-b border-provider-openai/30 bg-provider-openai/10 px-4 py-1.5 text-center text-[11px] text-offwhite/90"
+    >
+      <KeyRound className="h-3.5 w-3.5 shrink-0 text-provider-openai" />
+      <span>
+        Add at least one API key in <span className="font-semibold">Settings</span> — perception runs in
+        your browser using your keys (BYOK). No keys, no perception.
+      </span>
+      <Button variant="outline" size="sm" onClick={onOpenSettings}>
+        Open Settings
+      </Button>
+    </div>
+  );
+}
