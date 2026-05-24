@@ -32,7 +32,8 @@ DATA = REPO / "data"
 DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
 RAD_ID = "microsoft/rad-dino"
 BATCH = 16
-WORKERS = 8
+WORKERS = 6           # CPU loader threads (capped to leave the machine usable, <90% CPU)
+CPU_TORCH_THREADS = 4  # threads the CPU DenseNet may use
 PATCH_GRID = 8
 
 
@@ -51,7 +52,7 @@ def main() -> None:
     for m in (rad, dm):
         for p in m.parameters():
             p.requires_grad_(False)
-    torch.set_num_threads(max(2, (torch.get_num_threads() or 8)))  # let the CPU DenseNet use cores
+    torch.set_num_threads(CPU_TORCH_THREADS)  # cap CPU DenseNet so the machine stays usable (<90%)
     xcrop, xresize = xrv.datasets.XRayCenterCrop(), xrv.datasets.XRayResizer(224)
     seg, lung_idx = _get_seg()
     if seg is not None:
