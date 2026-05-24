@@ -1,0 +1,37 @@
+ENDPOINT: radiographic-TB-pattern (NOT bacteriologically-confirmed active TB). Research preview.
+sources: {'montgomery': 137, 'qatar': 1393, 'shenzhen': 647}
+total 2177  pos=1078  neg=1099  dup-cluster guard=OFF (no group column)
+
+--- LODO (fusion-only) — radiographic-TB-pattern, vs radiographic reference ---
+  holdout=montgomery     n=  137 pos=  58  AUC=0.893 [95% CI 0.83-0.94]  ECE=0.116  [cleaner external]
+      cold-start  (frozen thr)  sens=0.690 [95% CI 0.55-0.80] spec=0.937
+      + local recalibration     sens=0.976 [95% CI 0.87-1.00] spec=0.364  (eval n_pos=41)
+  holdout=qatar          n= 1393 pos= 693  AUC=0.917 [95% CI 0.90-0.93]  ECE=0.115  [LEAKAGE-PRONE: re-mix source]
+      cold-start  (frozen thr)  sens=0.821 [95% CI 0.79-0.85] spec=0.906
+      + local recalibration     sens=0.930 [95% CI 0.90-0.95] spec=0.500  (eval n_pos=486)
+  holdout=shenzhen       n=  647 pos= 327  AUC=0.803 [95% CI 0.77-0.84]  ECE=0.151  [cleaner external]
+      cold-start  (frozen thr)  sens=0.394 [95% CI 0.34-0.45] spec=0.972
+      + local recalibration     sens=0.926 [95% CI 0.88-0.96] spec=0.357  (eval n_pos=229)
+  >>> mean LODO AUC (fusion-only) = 0.871
+
+--- LODO (fusion+attention) — radiographic-TB-pattern, vs radiographic reference ---
+  holdout=montgomery     n=  137 pos=  58  AUC=0.931 [95% CI 0.88-0.98]  ECE=0.096  [cleaner external]
+      cold-start  (frozen thr)  sens=0.707 [95% CI 0.57-0.82] spec=0.949
+      + local recalibration     sens=0.976 [95% CI 0.87-1.00] spec=0.509  (eval n_pos=41)
+  holdout=qatar          n= 1393 pos= 693  AUC=0.926 [95% CI 0.91-0.94]  ECE=0.101  [LEAKAGE-PRONE: re-mix source]
+      cold-start  (frozen thr)  sens=0.846 [95% CI 0.82-0.87] spec=0.897
+      + local recalibration     sens=0.914 [95% CI 0.88-0.94] spec=0.659  (eval n_pos=486)
+  holdout=shenzhen       n=  647 pos= 327  AUC=0.856 [95% CI 0.83-0.88]  ECE=0.118  [cleaner external]
+      cold-start  (frozen thr)  sens=0.563 [95% CI 0.51-0.62] spec=0.916
+      + local recalibration     sens=0.882 [95% CI 0.83-0.92] spec=0.603  (eval n_pos=229)
+  >>> mean LODO AUC (fusion+attention) = 0.905
+
+attention ablation: fusion-only 0.871 -> fusion+attention 0.905 (delta +0.034)
+
+--- deployment utility (radiographic endpoint; mean of cleaner external folds: sens=0.93, spec=0.56) ---
+ prevalence     PPV     NPV   tests/flagged case
+        1%    2.1% 99.871%                 48.3
+        2%    4.1% 99.739%                 24.4
+  NOTE: PPV/NPV are for the RADIOGRAPHIC-TB label, not bacteriologically-confirmed active TB.
+
+final head -> data/tb_head.pt ; temperature=1.378 ; threshold@92%sens=0.815 (in-sample/optimistic — the honest numbers are the LODO folds above; re-fit per site)

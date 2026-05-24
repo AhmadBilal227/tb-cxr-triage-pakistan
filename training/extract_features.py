@@ -203,8 +203,7 @@ def main() -> None:
         print(f"MONOCHROME1 SUSPECTED (detect-only, not transformed) per source: {inv_by_src}  "
               f"— investigate if a source has a non-trivial rate; medical-grade needs DICOM tags")
     sub = df.iloc[keep]
-    np.savez_compressed(
-        DATA / "features.npz",
+    save_kwargs = dict(
         cls=np.stack(cls_l).astype("float32"),
         patches=np.stack(tok_l).astype("float16"),
         txrv=np.stack(txv_l).astype("float32"),
@@ -212,6 +211,9 @@ def main() -> None:
         source=sub["source"].to_numpy().astype(str),
         patient_id=sub["patient_id"].astype(str).to_numpy(),
     )
+    if "group" in df.columns:  # provenance cluster id from dedup.py -> train_tb leak-guard
+        save_kwargs["group"] = sub["group"].to_numpy().astype("int64")
+    np.savez_compressed(DATA / "features.npz", **save_kwargs)
     print(f"saved data/features.npz  cls={np.stack(cls_l).shape}  patches={np.stack(tok_l).shape}  "
           f"txrv={np.stack(txv_l).shape}  pos={int(sub['label'].sum())}  neg={int((sub['label']==0).sum())}")
 
