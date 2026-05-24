@@ -46,12 +46,15 @@ class _UF:
 def main() -> None:
     df = pd.read_csv(REPO / "data" / "index.csv").reset_index(drop=True)
     rows, bits, md5s, labels = [], [], [], []
+    skip_by_src: dict[str, int] = {}  # FAIL-VISIBLE (P1): count unreadable images dropped, per source
     for _, r in df.iterrows():
         full = r["path"] if str(r["path"]).startswith("/") else str(REPO / r["path"])
         try:
             raw = Path(full).read_bytes()
             ph = imagehash.phash(Image.open(full).convert("L"), hash_size=PHASH_SIZE)
         except Exception:
+            src = str(r["source"]) if "source" in r else "unknown"
+            skip_by_src[src] = skip_by_src.get(src, 0) + 1
             continue
         rows.append(r)
         bits.append(ph.hash.flatten().astype(np.uint8))
@@ -100,6 +103,12 @@ def main() -> None:
     n_clusters = int(len(np.unique(group)))
     print(f"dedup: kept {len(out)} / {n} readable (collapsed {n - len(out)} redundant copies into "
           f"{n_clusters} provenance clusters)")
+    n_skipped = int(sum(skip_by_src.values()))
+    if n_skipped:
+        print(f"SKIPPED (unreadable, dropped before dedup): {n_skipped}/{len(df)} images per source: "
+              f"{skip_by_src}  — investigate; index_dedup.csv is short by these source images")
+    else:
+        print(f"skipped images: 0/{len(df)} (every indexed image was readable)")
     if conflict_groups:
         print(f">>> DATA-QUALITY ALARM: {len(conflict_groups)} cross-label clusters (same image labelled "
               f"BOTH TB and Normal across wrappers). Kept in one group (no train/test leak), but the "

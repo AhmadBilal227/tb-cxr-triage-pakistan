@@ -1,8 +1,16 @@
 """CPU-only unit tests for the box->grid and mask->zone geometry in extract_features.py.
 
 These pin down the coordinate transform (the part most likely to be silently wrong) and the
-row-major token order. Run:  training/.venv/bin/python training/test_extract_geom.py
+row-major token order. Run the 13 FAST tests:
+    training/.venv/bin/python training/test_extract_geom.py
 (or)  training/.venv/bin/python -m pytest training/test_extract_geom.py -q
+
+There is ALSO one SLOW empirical test (test_radino_token_order_is_row_major) that downloads/loads
+microsoft/rad-dino and runs a real forward pass to prove the patch tokens are row-major (gy=vertical).
+It is EXCLUDED from the fast default run. To run it:
+    training/.venv/bin/python training/test_extract_geom.py --slow
+(or)  training/.venv/bin/python -m pytest training/test_extract_geom.py -q  (pytest runs it too,
+       unless deselected — it is decorated with @pytest.mark.slow when pytest is available).
 """
 from __future__ import annotations
 import sys
@@ -14,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from extract_features import (  # noqa: E402
     PATCH_GRID,
     N_ZONES,
+    RAD_ID,
     rasterize_boxes_to_grid,
     scale_boxes_orig_to_harmonized,
     parse_bbox_field,
@@ -21,6 +30,18 @@ from extract_features import (  # noqa: E402
     letterbox_square_params,
     letterbox_to_square,
 )
+
+
+def _slow(fn):
+    """Mark a test SLOW: excluded from the fast default `_run_all`, tagged @pytest.mark.slow when
+    pytest is installed so `pytest -m 'not slow'` can deselect it."""
+    fn._slow = True
+    try:
+        import pytest
+        fn = pytest.mark.slow(fn)
+    except Exception:
+        pass
+    return fn
 
 
 def test_box_at_known_crop_maps_to_expected_cells():
@@ -227,15 +248,88 @@ def test_zone_left_right_split():
     assert right_cols[3:6].sum() > right_cols[:3].sum(), (right_cols,)
 
 
-def _run_all():
-    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+@_slow
+def test_radino_token_order_is_row_major():
+    """EMPIRICAL (slow; needs microsoft/rad-dino). The fast `test_token_row_major_order` only proves
+    numpy.reshape is C-order — it does NOT prove the MODEL emits tokens row-major. This runs a REAL
+    forward pass and proves it.
+
+    Feed Rad-DINO a synthetic image that is WHITE in the TOP half and BLACK in the BOTTOM half, run the
+    PRODUCTION token-pooling path (`tok.transpose(1,2).reshape(B,D,37,37)`), compute the per-token
+    feature L2 norm, and check the TOP rows (gy<18) differ from the BOTTOM rows in the direction
+    consistent with row-major gy=vertical (gy increasing DOWNWARD). Rad-DINO is documented row-major
+    (model card / DINOv2 ViT), so the top/bottom token statistics must separate along the row axis.
+    """
+    import torch
+    from PIL import Image
+    from transformers import AutoImageProcessor, AutoModel
+
+    proc = AutoImageProcessor.from_pretrained(RAD_ID)
+    rad = AutoModel.from_pretrained(RAD_ID).eval()
+    for p in rad.parameters():
+        p.requires_grad_(False)
+
+    # synthetic top-white / bottom-black RGB image (square so the processor resize+center-crop is a
+    # true uniform resize — same condition the letterboxed production crop guarantees)
+    S = 518
+    arr = np.zeros((S, S, 3), dtype="uint8")
+    arr[: S // 2, :, :] = 255  # TOP half white, BOTTOM half black
+    img = Image.fromarray(arr)
+
+    rin = proc(images=[img], return_tensors="pt")
+    with torch.no_grad():
+        out = rad(**rin)
+    tok = out.last_hidden_state[:, 1:, :]  # drop CLS — PRODUCTION path (Rad-DINO has no register tokens)
+    g = int(round(tok.shape[1] ** 0.5))
+    assert tok.shape[1] == g * g, f"unexpected token count {tok.shape[1]} (registers?)"
+    assert g == 37, f"expected a 37x37 patch grid, got {g}x{g}"
+
+    # PRODUCTION reshape: [B,T,D] -> [B,D,g,g] indexed [.,.,gy,gx]
+    grid = tok.transpose(1, 2).reshape(tok.shape[0], tok.shape[2], g, g)
+    norm = grid[0].norm(dim=0).cpu().numpy()  # [g,g] per-token feature L2 norm, indexed [gy,gx]
+
+    mid = g // 2  # 18
+    top_rows = norm[:mid, :].mean()       # gy < 18  -> the WHITE half if gy is vertical/downward
+    bot_rows = norm[mid + 1:, :].mean()   # gy > 18  -> the BLACK half
+    # column halves: if the grid were row-major, the white/black split (a HORIZONTAL edge) must NOT
+    # appear along columns — left vs right token norms should be ~symmetric.
+    left_cols = norm[:, :mid].mean()
+    right_cols = norm[:, mid + 1:].mean()
+
+    print(f"[radino token-order] top_rows={top_rows:.3f} bot_rows={bot_rows:.3f} "
+          f"|delta_rows|={abs(top_rows - bot_rows):.3f} ; "
+          f"left_cols={left_cols:.3f} right_cols={right_cols:.3f} "
+          f"|delta_cols|={abs(left_cols - right_cols):.3f}")
+
+    row_delta = abs(top_rows - bot_rows)
+    col_delta = abs(left_cols - right_cols)
+    # The horizontal white/black edge must separate the token grid along ROWS (gy=vertical), and far
+    # more strongly than along columns. If gx/gy were swapped (column-major), the edge would instead
+    # appear along columns and this would fail — exactly what we want to catch.
+    assert row_delta > col_delta, (
+        f"row separation ({row_delta:.3f}) not greater than column separation ({col_delta:.3f}); "
+        f"Rad-DINO patch tokens may NOT be row-major (gy=vertical) — token<->grid mapping is wrong")
+    print("PASS  test_radino_token_order_is_row_major  -> Rad-DINO patch tokens ARE row-major (gy=vertical)")
+
+
+def _run_all(include_slow: bool = False):
+    fns = [v for k, v in sorted(globals().items())
+           if k.startswith("test_") and callable(v) and (include_slow or not getattr(v, "_slow", False))]
     passed = 0
     for fn in fns:
         fn()
         print(f"PASS  {fn.__name__}")
         passed += 1
-    print(f"\n{passed}/{len(fns)} tests passed")
+    skipped = [k for k, v in sorted(globals().items())
+               if k.startswith("test_") and callable(v) and getattr(v, "_slow", False)]
+    if not include_slow and skipped:
+        print(f"(skipped {len(skipped)} slow test(s): {', '.join(skipped)} — run with --slow)")
+    print(f"\n{passed} tests passed")
 
 
 if __name__ == "__main__":
-    _run_all()
+    if "--slow" in sys.argv:
+        # run ONLY the slow empirical token-order test (loads Rad-DINO)
+        test_radino_token_order_is_row_major()
+    else:
+        _run_all(include_slow=False)
