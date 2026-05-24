@@ -35,7 +35,10 @@ from sklearn.model_selection import train_test_split
 REPO = Path(__file__).resolve().parents[1]
 DATA = REPO / "data"
 DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
-TARGET_SENS = 0.92
+TARGET_SENS = 0.95  # WHO TPP OPTIMUM sensitivity for a TB triage test (floor is 0.90); paired with
+# optimum spec 0.80. Screening prioritizes catching TB over false alarms (a missed case is worse than
+# an extra confirmatory test). Realized specificity at this point is reported honestly per fold — at
+# our current AUROC ~0.92 expect spec to fall to ~0.50-0.65 (the 95/80 ideal needs a higher AUROC).
 BATCH = 256
 CAL_FRAC = 0.3          # held-out-site slice used to fit the local-recalibration threshold
 BOOTSTRAP_N = 2000      # resamples for the AUROC CI
