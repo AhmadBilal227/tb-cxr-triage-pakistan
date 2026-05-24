@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { HelpCircle, ThumbsDown, Check } from 'lucide-react';
+import { HelpCircle, KeyRound, ThumbsDown, Check } from 'lucide-react';
 import type { Adjudication, EnsembleResult, RagResult, Verdict } from '@/lib/types';
 import { Button } from './ui/button';
 import { ConfidenceRing } from './ConfidenceRing';
@@ -18,17 +18,61 @@ export function VerdictCard({
   rag,
   fallbackRate,
   onDisagree,
+  onOpenSettings,
 }: {
   adjudication: Adjudication;
   ensemble: EnsembleResult | null;
   rag: RagResult | null;
   fallbackRate: number;
   onDisagree: (label: 0 | 1) => Promise<void>;
+  /** Required for the "perception unavailable" state's CTA. Optional everywhere else. */
+  onOpenSettings?: () => void;
 }): JSX.Element {
   const [showWhy, setShowWhy] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [saved, setSaved] = useState(false);
   const meta = VERDICT_META[adjudication.verdict];
+
+  // Honesty contract: when every perception member errored (no API key, all keys
+  // rejected, all models retired from hf-inference), the safety net forces an
+  // abstain — but rendering "UNCERTAIN — REFER" implies the model evaluated the
+  // image and was uncertain. That is a lie. Surface a distinct state instead.
+  if (adjudication.perception_unavailable) {
+    return (
+      <div
+        role="alert"
+        data-testid="verdict-perception-unavailable"
+        className="rounded-xl border border-provider-replicate/40 bg-provider-replicate/5 p-4"
+      >
+        <div className="flex items-start gap-3">
+          <KeyRound className="mt-0.5 h-5 w-5 shrink-0 text-provider-replicate" />
+          <div className="min-w-0 flex-1">
+            <div className="text-base font-semibold text-offwhite">Perception unavailable</div>
+            <p className="mt-1 text-[12px] leading-relaxed text-offwhite/80">
+              No perception model returned a result, so the app has not evaluated this image. This
+              is not an "uncertain" reading — there is no reading at all. Configure an API key in
+              Settings (Hugging Face token recommended; Replicate fallback optional) and re-drop
+              the image.
+            </p>
+            {adjudication.auto_abstain_reasons.length > 0 && (
+              <ul className="mt-2 space-y-0.5 font-mono text-[10px] text-muted">
+                {adjudication.auto_abstain_reasons.map((r, i) => (
+                  <li key={i}>· {r}</li>
+                ))}
+              </ul>
+            )}
+            {onOpenSettings && (
+              <div className="mt-3">
+                <Button variant="outline" size="sm" onClick={onOpenSettings}>
+                  Open Settings
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const handleDisagree = async (label: 0 | 1): Promise<void> => {
     await onDisagree(label);

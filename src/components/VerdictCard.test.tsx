@@ -72,3 +72,98 @@ describe('VerdictCard scar-FPR disclosure', () => {
     expect(html).toContain('data-testid="scar-fpr-disclosure"');
   });
 });
+
+/**
+ * Perception-unavailable state (Milestone 20).
+ *
+ * When ALL three perception members error (no HF/Replicate keys, all keys
+ * rejected, all configured HF models retired from the hf-inference router),
+ * the orchestrator forces an abstain via the safety net AND sets the new
+ * adjudication.perception_unavailable flag. VerdictCard must render a
+ * distinct honest empty-state card rather than the misleading "UNCERTAIN —
+ * REFER" card with a near-zero confidence ring.
+ */
+describe('VerdictCard perception-unavailable state', () => {
+  function perceptionUnavailableAdjudication(): Adjudication {
+    return {
+      verdict: 'abstain',
+      confidence: 0,
+      rationale: 'Adjudication call failed; defaulting to abstain.',
+      abstain_reason: 'no perception model returned a result',
+      auto_abstained: true,
+      auto_abstain_reasons: ['no perception model returned a result'],
+      perception_unavailable: true,
+    };
+  }
+
+  it('renders the perception-unavailable card instead of the regular abstain card', () => {
+    const html = renderToStaticMarkup(
+      <VerdictCard
+        adjudication={perceptionUnavailableAdjudication()}
+        ensemble={null}
+        rag={null}
+        fallbackRate={0}
+        onDisagree={async () => undefined}
+        onOpenSettings={() => undefined}
+      />,
+    );
+    expect(html).toContain('data-testid="verdict-perception-unavailable"');
+    expect(html).toContain('Perception unavailable');
+    expect(html).toContain('Configure an API key in Settings');
+    // The fake "UNCERTAIN — REFER" headline MUST NOT appear when this flag is set.
+    expect(html).not.toContain('UNCERTAIN');
+    // The misleading scar-FPR disclosure must also not appear: nothing was measured.
+    expect(html).not.toContain('data-testid="scar-fpr-disclosure"');
+  });
+
+  it('includes the Open Settings button when onOpenSettings is provided', () => {
+    const html = renderToStaticMarkup(
+      <VerdictCard
+        adjudication={perceptionUnavailableAdjudication()}
+        ensemble={null}
+        rag={null}
+        fallbackRate={0}
+        onDisagree={async () => undefined}
+        onOpenSettings={() => undefined}
+      />,
+    );
+    expect(html).toContain('Open Settings');
+  });
+
+  it('still renders without the button when onOpenSettings is omitted', () => {
+    const html = renderToStaticMarkup(
+      <VerdictCard
+        adjudication={perceptionUnavailableAdjudication()}
+        ensemble={null}
+        rag={null}
+        fallbackRate={0}
+        onDisagree={async () => undefined}
+      />,
+    );
+    expect(html).toContain('Perception unavailable');
+    expect(html).not.toContain('Open Settings');
+  });
+
+  it('falls back to the regular verdict card when perception_unavailable is false', () => {
+    const adj: Adjudication = {
+      verdict: 'abstain',
+      confidence: 30,
+      rationale: 'genuine uncertainty',
+      auto_abstained: false,
+      auto_abstain_reasons: [],
+      perception_unavailable: false,
+    };
+    const html = renderToStaticMarkup(
+      <VerdictCard
+        adjudication={adj}
+        ensemble={mockEnsemble()}
+        rag={mockRag()}
+        fallbackRate={0}
+        onDisagree={async () => undefined}
+        onOpenSettings={() => undefined}
+      />,
+    );
+    expect(html).not.toContain('data-testid="verdict-perception-unavailable"');
+    expect(html).toContain('UNCERTAIN');
+  });
+});

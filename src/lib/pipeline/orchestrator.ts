@@ -475,6 +475,10 @@ export async function runPipeline(
           : parsed.abstain_reason,
       auto_abstained: finalVerdict === 'abstain' && modelVerdict !== 'abstain',
       auto_abstain_reasons: reasons,
+      // Honesty contract: when every perception member errored, the verdict is forced
+      // to abstain by the safety net above. Flag the case so VerdictCard renders the
+      // dedicated "configure an API key" state instead of a misleading uncertain card.
+      perception_unavailable: noPerception,
       screening: {
         policyVerdict: policy.verdict,
         modelVerdict: modelVerdict,
@@ -493,6 +497,7 @@ export async function runPipeline(
     adjudication = {
       verdict: 'abstain', confidence: 0, rationale: 'Adjudication call failed; defaulting to abstain.',
       abstain_reason: message, auto_abstained: true, auto_abstain_reasons: [`adjudicator error: ${message}`],
+      perception_unavailable: noPerception,
     };
     emit({ type: 'error', stage: 'adjudicate', message });
     emit({ type: 'stage_status', stage: 'adjudicate', status: 'error' });

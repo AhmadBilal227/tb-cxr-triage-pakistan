@@ -4,6 +4,8 @@ import { Dialog, DrawerContent, DialogTitle } from './ui/dialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
 import { Button } from './ui/button';
 import { settingsStore, useSettings, deriveCapabilities } from '@/store/settings';
+import { useProviderStatus } from '@/store/providerStatus';
+import { ProviderStatusBadge } from './ProviderStatusBadge';
 import { cn } from '@/lib/utils';
 
 function Field({
@@ -47,6 +49,7 @@ export function SettingsDrawer({
 }): JSX.Element {
   const s = useSettings();
   const caps = deriveCapabilities(s);
+  const providerStatus = useProviderStatus();
   const [overridesOpen, setOverridesOpen] = useState(false);
 
   return (
@@ -64,29 +67,38 @@ export function SettingsDrawer({
           </div>
 
           <div className="space-y-3">
-            <Field
-              label="OpenAI API key"
-              type="password"
-              value={s.openaiKey}
-              onChange={(v) => settingsStore.set({ openaiKey: v })}
-              placeholder="sk-..."
-              hint="Used for quality gate, VLM read, and adjudication (orchestration only)."
-            />
-            <Field
-              label="Hugging Face token"
-              type="password"
-              value={s.hfToken}
-              onChange={(v) => settingsStore.set({ hfToken: v })}
-              placeholder="hf_..."
-              hint="Primary perception layer (serverless Inference API)."
-            />
-            <Field
-              label="Replicate API token (optional)"
-              type="password"
-              value={s.replicateToken}
-              onChange={(v) => settingsStore.set({ replicateToken: v })}
-              placeholder="r8_..."
-            />
+            <div className="space-y-1">
+              <Field
+                label="OpenAI API key"
+                type="password"
+                value={s.openaiKey}
+                onChange={(v) => settingsStore.set({ openaiKey: v })}
+                placeholder="sk-..."
+                hint="Used for quality gate, VLM read, and adjudication (orchestration only)."
+              />
+              <ProviderStatusBadge provider="openai" hasKey={caps.hasOpenAI} status={providerStatus.openai} />
+            </div>
+            <div className="space-y-1">
+              <Field
+                label="Hugging Face token"
+                type="password"
+                value={s.hfToken}
+                onChange={(v) => settingsStore.set({ hfToken: v })}
+                placeholder="hf_..."
+                hint="Primary perception layer (serverless Inference API). Many TB models have been retired from the hf-inference router — set a working slug in Model overrides if your verdict shows 'model not available'."
+              />
+              <ProviderStatusBadge provider="hf" hasKey={caps.hasHF} status={providerStatus.hf} />
+            </div>
+            <div className="space-y-1">
+              <Field
+                label="Replicate API token (optional)"
+                type="password"
+                value={s.replicateToken}
+                onChange={(v) => settingsStore.set({ replicateToken: v })}
+                placeholder="r8_..."
+              />
+              <ProviderStatusBadge provider="replicate" hasKey={caps.hasReplicate} status={providerStatus.replicate} />
+            </div>
             {!caps.hasReplicate && (
               <div className="flex items-start gap-2 rounded-md border border-border bg-surface-2 p-2 text-[10px] text-muted">
                 <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-provider-replicate" />

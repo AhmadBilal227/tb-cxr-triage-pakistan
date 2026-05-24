@@ -221,6 +221,18 @@ export interface Adjudication {
   auto_abstained: boolean;
   /** Human-readable reasons the guardrail / policy fired. */
   auto_abstain_reasons: string[];
+  /**
+   * True when NO perception provider succeeded — every ensemble member (TB classifier,
+   * general CXR, VLM) errored out, e.g. because the user has not set any API key or
+   * every configured provider returned an error. The verdict in this case is forced to
+   * abstain by the safety net, but the UI MUST distinguish this from a real "uncertain"
+   * reading: the model did not actually evaluate the image at all.
+   *
+   * Setting this flag is the contract VerdictCard uses to render a dedicated
+   * "Perception unavailable — configure an API key in Settings" state rather than a
+   * misleading "UNCERTAIN — REFER" card with a near-zero confidence ring.
+   */
+  perception_unavailable?: boolean;
   /** Transparency: how the safety-net combine reached the final verdict. */
   screening?: {
     policyVerdict: Verdict;
