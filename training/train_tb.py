@@ -231,6 +231,161 @@ class TBHeadT2(nn.Module):
     _zones: torch.Tensor
 
 
+# ---------------------------------------------------------------------------
+# Inactive-sequelae (active-vs-healed) aux head. Blueprint §0.1, §2 Phase E, §6.
+#
+# WHAT IT DETECTS. An INACTIVE/SEQUELAE radiographic pattern (calcified granuloma, fibrosis,
+# volume loss, pleural thickening) — the dominant South-Asian FALSE-POSITIVE source: an OLD/HEALED
+# TB scar misread as active disease. It does NOT detect immunologic LATENT TB (radiographically
+# SILENT, CXR sens ~15%) — TBX11K's "latent" label is a MISNOMER for inactive/sequelae (Blueprint
+# §0.1). We never emit "latent TB" from a film; the score is `s_inactive`, an inactive/sequelae
+# pattern score, NOT an activity-cleared signal.
+#
+# WHY KEEP THE PATCH TOKENS. TorchXRayVision has NO `Calcification` logit (18 labels confirmed;
+# Blueprint §0.3) — and calcification is the MOST SPECIFIC inactive sign. So a head on the 18 named-
+# finding logits alone is blind to the single most discriminative feature. We pool the Rad-DINO patch
+# tokens (which carry the texture of a calcified granuloma) via gated attention and concatenate CLS +
+# the 18 logits. Small head, heavy dropout — the probe is tiny (139 images).
+#
+# THE SHARED-PROVENANCE CONFOUND (report LOUDLY). Positives (the 139 sequelae probe) and the negatives
+# used to train this head (active-TB images) BOTH come substantially from TBX11K. A high active-vs-
+# sequelae AUROC can therefore reflect a TBX11K-internal active/inactive split that does NOT transfer
+# off-site. Honest ceiling ~0.82-0.88; **>0.90 => suspect leakage**, NOT a win.
+N_TXRV_LOGITS_SEQ = N_TXRV_LOGITS  # alias (the 18 named-finding logits live at txrv[:, 1024:])
+
+
+class InactiveSequelaeHead(nn.Module):
+    """Small aux head: gated-attention pool over Rad-DINO patch tokens + CLS + the 18 TXRV logits ->
+    MLP -> a single `s_inactive` logit (high = an inactive/sequelae pattern, e.g. an old calcified
+    scar). Deliberately NOT sharing the T2 trunk's weights: the probe is tiny (139 pos) so a separate,
+    heavily-regularized head is safer than fine-tuning the shared trunk and risking overfit/leakage."""
+
+    def __init__(self, d_tok: int, d_cls: int, n_logits: int = N_TXRV_LOGITS_SEQ):
+        super().__init__()
+        self.att = GatedAttention(d_tok)  # patches carry the calcification texture TXRV cannot
+        self.find_embed = nn.Sequential(nn.Linear(n_logits, 32), nn.GELU())
+        d = d_tok + d_cls + 32
+        self.mlp = nn.Sequential(
+            nn.LayerNorm(d), nn.Dropout(0.4), nn.Linear(d, 64), nn.GELU(),
+            nn.Dropout(0.4), nn.Linear(64, 1),
+        )
+
+    def forward(self, cls: torch.Tensor, patches: torch.Tensor, txrv: torch.Tensor) -> torch.Tensor:
+        find_logits = txrv[:, txrv.shape[1] - N_TXRV_LOGITS_SEQ :]  # [B,18]
+        feats = torch.cat([self.att(patches), cls, self.find_embed(find_logits)], dim=1)
+        return self.mlp(feats).squeeze(-1)
+
+
+def _seq_arrs_from(npz_main: dict, npz_seq: dict, tbx_only: bool) -> tuple[dict, np.ndarray, np.ndarray]:
+    """Assemble the active-vs-sequelae training set: positives = the sequelae probe (label 1), negatives
+    = the active-TB images from features.npz (label 0 *for this head*). `tbx_only` restricts negatives to
+    the TBX11K active images — the HARDEST, most honest comparison (same provenance as the probe, so a
+    site shortcut can't inflate it). Returns (arrs, y_seq, src) where src marks 'sequelae' vs the active
+    source so we can do provenance-aware splits. The sequelae probe is NEVER in features.npz, so it is
+    automatically held out of the MAIN TB head's training/eval (ethos)."""
+    y_main = npz_main["y"].astype("int64")
+    src_main = npz_main["source"].astype(str)
+    active = y_main == 1
+    if tbx_only:
+        active = active & (src_main == "tbx11k")
+    keys = ("cls", "patches", "txrv")
+    arrs = {}
+    for k in keys:
+        arrs[k] = np.concatenate([npz_seq[k].astype("float32"), npz_main[k][active].astype("float32")], axis=0)
+    n_seq = int(npz_seq["cls"].shape[0])
+    n_act = int(active.sum())
+    y_seq = np.concatenate([np.ones(n_seq, dtype="int64"), np.zeros(n_act, dtype="int64")])
+    src = np.concatenate([np.array(["sequelae"] * n_seq), src_main[active]])
+    return arrs, y_seq, src
+
+
+def train_inactive_head(arrs: dict, y: np.ndarray, tr: np.ndarray, va: np.ndarray,
+                        max_epochs: int = 120, patience: int = 12, seed: int = SEED) -> InactiveSequelaeHead:
+    """Train the inactive-sequelae head (positive = sequelae probe, negative = active TB). Pos_weight
+    BCE, AdamW, early-stop on validation AUPRC. Prior-fixed knobs (NOT tuned on any test fold)."""
+    rng = np.random.default_rng(seed)
+    model = InactiveSequelaeHead(arrs["patches"].shape[2], arrs["cls"].shape[1]).to(DEVICE)
+    n_pos = max(1, int((y[tr] == 1).sum()))
+    n_neg = max(1, int((y[tr] == 0).sum()))
+    loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([n_neg / n_pos], device=DEVICE))
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=3e-2)  # heavier WD (tiny probe)
+    best_ap, best_state, bad = -1.0, None, 0
+    for _ in range(max_epochs):
+        model.train()
+        for b in _batches(len(tr), shuffle=True, rng=rng):
+            ix = tr[b]
+            g = _gather({k: arrs[k] for k in ("cls", "patches", "txrv")}, ix)
+            yt = torch.tensor(y[ix], dtype=torch.float32, device=DEVICE)
+            opt.zero_grad()
+            loss_fn(model(g["cls"], g["patches"], g["txrv"]), yt).backward()
+            opt.step()
+        ap = average_precision_score(y[va], predict_inactive(model, arrs, va))
+        if ap > best_ap:
+            best_ap, best_state, bad = ap, {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}, 0
+        else:
+            bad += 1
+            if bad >= patience:
+                break
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    return model
+
+
+def predict_inactive_logits(model: InactiveSequelaeHead, arrs: dict, idx: np.ndarray) -> np.ndarray:
+    model.eval()
+    out = []
+    with torch.no_grad():
+        for b in _batches(len(idx), shuffle=False):
+            ix = idx[b]
+            g = _gather({k: arrs[k] for k in ("cls", "patches", "txrv")}, ix)
+            out.append(model(g["cls"], g["patches"], g["txrv"]).cpu().numpy())
+    return np.concatenate(out)
+
+
+def predict_inactive(model: InactiveSequelaeHead, arrs: dict, idx: np.ndarray, temperature: float = 1.0) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-predict_inactive_logits(model, arrs, idx) / temperature))
+
+
+# ---------------------------------------------------------------------------
+# VERDICT GATE — escalate-not-clear (Blueprint §6, §2 Phase E).
+# The inactive head can RAISE old-scar suspicion (force review) but can NEVER clear a flagged film:
+# reactivation hides in scar, and activity is often unprovable on one film (destroyed lung). So a high
+# `s_inactive` + a WEAK active signal does NOT become a NO ("just old scar") — it becomes UNDETERMINED.
+SEQ_HIGH_DEFAULT = 0.5  # `s_inactive` above this = a clear inactive/sequelae pattern present
+
+
+def activity_verdict(p_active: float, s_inactive: float, tau_low: float, tau_high: float,
+                     seq_high: float = SEQ_HIGH_DEFAULT) -> dict:
+    """Map (calibrated active-TB prob, inactive-sequelae score) -> a verdict that NEVER clears a flagged
+    film on old-scar evidence. Returns {verdict, activity, reason}.
+
+    Rules (deterministic safety net wraps the model — guardrails decide, the head only advises):
+      - p_active >= tau_high                         -> YES   (screen-positive; the inactive head cannot
+                                                               override a strong active signal)
+      - tau_low <= p_active < tau_high               -> UNDETERMINED (near-threshold review)
+      - p_active < tau_low AND s_inactive >= seq_high -> UNDETERMINED, activity='indeterminate'
+                                                        (old-scar pattern present + weak active signal:
+                                                         ESCALATE, do NOT clear — reactivation hides in scar)
+      - p_active < tau_low AND s_inactive <  seq_high -> NO    (screen-negative; subclinical disclaimer
+                                                               still applies, handled by the verdict layer)
+
+    The inactive head therefore only ever RAISES suspicion (NO -> UNDETERMINED). It can never turn a
+    YES or an UNDETERMINED into a NO. activity is 'active-suspect' (YES), 'indeterminate' (escalated
+    old-scar), or 'none-on-screen' (clean NO)."""
+    if p_active >= tau_high:
+        return {"verdict": "YES", "activity": "active-suspect",
+                "reason": "p_active >= tau_high (strong active signal; inactive head cannot override)"}
+    if p_active >= tau_low:
+        return {"verdict": "UNDETERMINED", "activity": "indeterminate",
+                "reason": "near-threshold active probability -> radiologist review"}
+    if s_inactive >= seq_high:
+        return {"verdict": "UNDETERMINED", "activity": "indeterminate",
+                "reason": "inactive/sequelae pattern present with weak active signal -> escalate, do NOT "
+                          "clear as old scar (reactivation hides in scar; activity unprovable on one film)"}
+    return {"verdict": "NO", "activity": "none-on-screen",
+            "reason": "weak active signal and no inactive/sequelae pattern (subclinical disclaimer applies)"}
+
+
 def clopper_pearson(k: int, n: int, alpha: float = 0.05) -> tuple[float, float]:
     if n == 0:
         return (float("nan"), float("nan"))

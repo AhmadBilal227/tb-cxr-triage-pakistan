@@ -1,0 +1,51 @@
+ENDPOINT: radiographic inactive/sequelae PATTERN (NOT immunologic latent TB — that is radiographically silent). Research preview, not a device.
+sequelae probe: 139 UNIQUE images (denominator = 139; the blueprint's '169' is stale — the current index_tbx_latent.csv has 139 rows). Source: tbx11k_sequelae, all label-1-as-stored.
+active-TB negatives for the inactive head: all-source=1747, TBX11K-only=660
+
+=== (a) SeqFPR — main TB head over-calling old scar (operating threshold from tb_threshold_t2.json @95% sens) ===
+  threshold=0.610  temperature=1.591
+  SeqFPR = 117/139 = 0.842  [95% Clopper-Pearson CI 0.770-0.898]
+  (fraction of the 139 inactive/sequelae films the MAIN TB head flags as screen-positive; these are the old-scar false alarms the inactive head must catch.)
+
+=== (b) active-vs-sequelae AUROC — negatives = TBX11K-only (HONEST: same provenance as the probe) ===
+  set: 139 sequelae (pos) vs 660 active TB (neg)
+  active-vs-sequelae AUROC via s_inactive = 0.728 [95% CI 0.68-0.77]  (within honest band)
+  active-vs-sequelae AUROC via MAIN TB prob = 0.338 [95% CI 0.28-0.40] (the main head's prob separates sequelae from active only incidentally — it was never trained for activity discrimination)
+  honest ceiling for active-vs-healed on ONE frontal film ~0.82-0.88.
+
+=== (b) active-vs-sequelae AUROC — negatives = all-source (optimistic) ===
+  set: 139 sequelae (pos) vs 1747 active TB (neg)
+  active-vs-sequelae AUROC via s_inactive = 0.880 [95% CI 0.86-0.90]  (within honest band)
+  active-vs-sequelae AUROC via MAIN TB prob = 0.284 [95% CI 0.24-0.33] (the main head's prob separates sequelae from active only incidentally — it was never trained for activity discrimination)
+  honest ceiling for active-vs-healed on ONE frontal film ~0.82-0.88.
+
+=== (c) net effect of the escalate-not-clear gate on the SeqFPR over-calls ===
+  gate: tau_high=0.610 tau_low=0.305 seq_high=0.5 (illustrative; re-fit per site)
+  pre-gate: 117/139 sequelae over-called active (the SeqFPR).
+  post-gate verdicts on the 139 sequelae (strict escalate-not-clear): YES=117  UNDETERMINED=17  NO=5
+  117/117 over-calls stay YES (strong active prob; the inactive head CANNOT clear them — escalate-not-clear). The strict gate moves the BELOW-threshold films into UNDETERMINED/NO, NEVER an over-call into a NO ('just old scar').
+
+  ACHIEVABLE net specificity recovery (review-band escalation, tau_review=0.860, s_inactive>=0.5):
+    1/117 over-calls moved YES->UNDETERMINED (flagged for old-scar review, not a confident screen-positive).
+    confident-YES SeqFPR 0.842 -> 0.835 (delta -0.007). These films are still TESTED (UNDETERMINED), never CLEARED.
+  The inactive head's primary job is the INVERSE direction: on a WEAK active signal it RAISES old-scar suspicion (NO -> UNDETERMINED), so a subtle reactivation in scar is reviewed, never cleared.
+
+  HONEST FINDING (the load-bearing one): the main head is CONFIDENTLY wrong on old scar — 100/139 (72%) sequelae score p_active>=0.95 (median 0.998).
+    => A post-hoc escalate-not-clear GATE cannot meaningfully cut SeqFPR (it must not override a
+       confident active signal — reactivation hides in scar). The real SeqFPR fix is to feed
+       s_inactive into the head as a SPECIFICITY FEATURE / recalibration input, or to HARD-
+       NEGATIVE-MINE old scar into the ACTIVE head's training — NOT a downstream gate. The gate's
+       value is the INVERSE safety direction (raise suspicion on weak-signal scar), not SeqFPR.
+
+=== verdict-gate truth table (escalate-not-clear; the inactive head can RAISE but never CLEAR) ===
+  p_active=0.95 s_inactive=0.90 (strong active + old scar    ) -> YES           activity=active-suspect
+  p_active=0.95 s_inactive=0.10 (strong active, no scar      ) -> YES           activity=active-suspect
+  p_active=0.45 s_inactive=0.90 (near-threshold + old scar   ) -> UNDETERMINED  activity=indeterminate
+  p_active=0.10 s_inactive=0.90 (weak active + old scar      ) -> UNDETERMINED  activity=indeterminate
+  p_active=0.10 s_inactive=0.10 (weak active, no scar        ) -> NO            activity=none-on-screen
+
+=== SHARED-PROVENANCE CAVEAT (carry into every claim) ===
+  The 139-image probe and the active-TB BOXES both come from TBX11K. A high active-vs-sequelae
+  AUROC may reflect a TBX11K-internal split, NOT a transferable active-vs-healed signal. The
+  TBX11K-only-negatives number is the honest one; >0.90 is treated as SUSPECT, not a win. The
+  endpoint is RADIOGRAPHIC; activity is often unprovable on one film. We never emit 'latent TB'.
