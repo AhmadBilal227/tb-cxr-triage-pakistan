@@ -11,13 +11,12 @@ import type {
   Settings,
   Verdict,
 } from '@/lib/types';
-import { ENSEMBLE_WEIGHTS, KNN_K } from '@/lib/defaults';
+import { KNN_K } from '@/lib/defaults';
 import { deriveCapabilities } from '@/store/settings';
 import { blobToDataURL, clamp, shortId } from '@/lib/utils';
-import { classifyWithFallback, cosineSimilarity, embedWithFallback } from '@/lib/providers/classify';
+import { cosineSimilarity, embedWithFallback } from '@/lib/providers/classify';
 import { openaiJSON } from '@/lib/providers/openai';
 import { getEmbeddedCases } from '@/lib/db';
-import { buildGeneralStageConfig, buildTbStageConfig } from './stageConfigs';
 import { QUALITY_PROMPT, QUALITY_SCHEMA } from './prompts';
 import {
   isBorderlineForConsistencyCheck,
@@ -37,29 +36,33 @@ import { localTriage, type LocalTriageResult } from '@/lib/providers/localTriage
 type Emit = (e: PipelineEvent) => void;
 
 /**
- * ORCHESTRATOR — Milestone 21 PIVOT (VLM-PRIMARY, see CASE_STUDY M21 + brief).
+ * ORCHESTRATOR — Milestone 23 (HF removed).
  *
- * Before M21: a three-member perception ensemble (HF TB head + HF general CXR
- * head + gpt-5.5 vision self-consistency K=3) feeding a streamed gpt-5.5
- * adjudicator. M20 confirmed both HF heads are off the free hf-inference router
- * (HTTP 400 "Model not supported by provider hf-inference"). The deployed app
- * had no working primary perception.
+ * Pipeline shape after M23:
+ *   1. quality       — gpt-5.5 vision quality gate (OpenAI key required).
+ *   2. perception    — single-path, in priority order:
+ *        a) LOCAL-MODE PRIMARY (when settings.localMode === true AND the FastAPI
+ *           server is reachable). Validated Rad-DINO + TXRV + TBHeadT2 +
+ *           InactiveSequelaeHead under the calibrated T/T_sequelae. Optional
+ *           gpt-5.5 verifier fires only on borderline tb_prob or scar-mimic
+ *           s_inactive; disagreement forces ABSTAIN. Emits under stage id
+ *           `ensemble.tb` (the existing UI trace card carries it).
+ *        b) VLM-PRIMARY (gpt-5.5 vision via Responses API structured-output).
+ *           Used when local mode is off OR the local server is unreachable.
+ *           ONE deterministic primary call + ONE verifier call when borderline.
+ *           Emits under stage id `ensemble.vlm`.
+ *   3. rag           — kNN retrieval (Replicate-only embeddings). Display-only.
+ *   4. adjudicate    — synthetic; the perception submission IS the adjudication.
+ *   5. verdict       — finalize.
  *
- * After M21: gpt-5.5 vision via the Responses API's structured-output schema
- * IS the primary perception. The submission carries enough structured signal
- * (screen_result, uncalibrated scores, mimic features, safety flags) that the
- * streamed adjudicator stage is no longer the load-bearing decision step — the
- * VLM submission + a path-specific safety net IS the decision. We keep the
- * quality gate, the optional HF perception members (when configured), and the
- * RAG retrieval for the audit trail, but the verdict is built directly from
- * the submission and the M21 escalation rule.
- *
- * Why no self-consistency K-sample here: that pattern was a calibration trick
- * when the VLM was the THIRD ensemble member. Now that it is the PRIMARY,
- * correlated self-sampling looks like ensembling but isn't. Instead we fire
- * ONE deterministic primary call, and for borderline / scar-mimic results,
- * ONE independent verifier call with different prompt phrasing. If primary
- * and verifier disagree on screen_result → abstain. See vlmTriage.ts.
+ * Hugging Face was removed in M23 — the free hf-inference router dropped every
+ * default classifier we relied on through 2024-2025, and we already have a
+ * strictly better local path (the M22 server runs the validated 0.922-AUROC
+ * trained model). There is no "ensemble" anymore: the perception is single-
+ * path. The synthetic EnsembleResult emitted to the UI is preserved as a
+ * single-member shape so existing trace cards keep rendering — but the
+ * pretense of a multi-member vote is gone, and the orchestrator no longer fires
+ * any HF call, holds any HF token, or wires any HF model id.
  */
 
 const SEVERITY: Record<Verdict, number> = { no_tb: 0, abstain: 1, tb: 2 };
@@ -97,21 +100,11 @@ interface VlmCombineResult {
 }
 
 // ---------------------------------------------------------------------------
-// Milestone 22 — local-mode helpers.
+// Local-mode helpers (Milestone 22, unchanged in M23).
 //
 // localBorderline: when the calibrated `tb_prob` from the local server sits
 // inside [0.35, 0.65] OR `s_inactive` exceeds the scar-recall threshold (0.7126),
 // we ALSO fire the gpt-5.5 vision call — it doesn't decide, it consistency-checks.
-// A disagreement on screen_result forces ABSTAIN; agreement leaves the local
-// verdict untouched. This is the M22 "GPT becomes the second opinion, not the
-// primary" pivot from M21.
-//
-// The borderline band is the SAME band the M19 sequelaeEscalation rule uses:
-// BORDERLINE_LOW = 0.35 (lower edge) and the validated thr@95sens = 0.6105 (upper
-// edge). For the local-mode GPT-verifier trigger we extend the upper edge to 0.65
-// to match the M21 VLM borderline window (so the verifier policy is consistent
-// across paths even though the threshold itself is path-specific). The 0.7126
-// s_inactive trigger is the M19 escalate-not-clear flag.
 // ---------------------------------------------------------------------------
 const LOCAL_BORDERLINE_LOW = 0.35;
 const LOCAL_BORDERLINE_HIGH_FOR_GPT_CHECK = 0.65;
@@ -153,12 +146,11 @@ interface LocalCombineResult {
  *      the deterministic sequelaeEscalation rule on the SERVER side).
  *   2. If a verifier ran and disagreed on screen_result → ABSTAIN.
  *   3. Re-apply the sequelae escalation client-side as a belt-and-braces step:
- *      it must be idempotent (the server already applied it), so this only fires
- *      on the off-chance the server-side rule diverges. If it ever does, the
- *      audit trail records "client safety net escalated" so the drift is visible.
+ *      idempotent on the server side; only differs if the server-side rule
+ *      ever drifts.
  *
  * Confidence is rendered from `tb_prob`: above the validated threshold (0.6105)
- * scales linearly to ~100; below the threshold scales linearly to ~0. This
+ * scales linearly to ~95; below the threshold scales linearly to ~5. This
  * is the ONLY place in the project that allows a "high-confidence" number,
  * because it IS a calibrated probability from a validated head.
  */
@@ -191,8 +183,8 @@ export function combineLocalIntoAdjudication(args: {
   }
 
   // Belt-and-braces: re-apply the sequelae escalation client-side. Server
-  // already ran it (verdict came back as 'abstain' if it fired) — this is here
-  // so a future server-rule drift surfaces immediately rather than silently.
+  // already ran it — this is here so a future server-rule drift surfaces
+  // immediately rather than silently.
   const clientEsc = applySequelaeEscalation({
     verdict: finalVerdict,
     tbProb: local.tb_prob,
@@ -204,9 +196,9 @@ export function combineLocalIntoAdjudication(args: {
     if (clientEsc.reason) reasons.push(`client safety net escalated: ${clientEsc.reason}`);
   }
 
-  // Confidence: linear ramp on tb_prob, anchored at the validated threshold so
-  // a value bang-on threshold reads ~50%. Capped at 95 — even the validated head
-  // has measured ~10% mimic FPR on NIH stress, so we never claim 100.
+  // Confidence: linear ramp on tb_prob, anchored at the validated threshold.
+  // Capped at 95 — even the validated head has measured ~10% mimic FPR on NIH
+  // stress, so we never claim 100.
   const distFromThr = local.tb_prob - local.decided_at_threshold;
   const span = local.tb_prob >= local.decided_at_threshold
     ? Math.max(0.001, 1 - local.decided_at_threshold)
@@ -258,16 +250,15 @@ export function combineLocalIntoAdjudication(args: {
 
   // Synthetic ensemble: ONE member representing the local head (with its
   // calibrated tb_prob), plus the GPT verifier as a SECOND member when it ran.
-  // safetyNetApplied is preserved in the trace via auto_abstain_reasons. We
-  // intentionally do NOT show the s_inactive head as its own "member" — it does
-  // not produce a TB probability, it escalates verdicts.
+  // Provider tag uses 'local-triage' for the local member (M23 — no more 'hf'
+  // pseudo-tag).
   const localMember: EnsembleMember = {
     id: 'tb',
     label: 'Local validated head (Rad-DINO + TXRV + TBHeadT2)',
     weight: 1,
     status: 'done',
     tb_prob: local.tb_prob,
-    provider_used: 'hf', // closest enum value; provider tag below carries the real id
+    provider_used: 'local-triage',
     latency_ms: local.latency_ms.total ?? null,
     raw: local,
     findings: local.image_quality.warnings,
@@ -318,13 +309,15 @@ export function combineLocalIntoAdjudication(args: {
  *   1. consistency-check abstain when primary + verifier disagree on screen_result,
  *   2. the M21 VLM-path escalate-not-clear rule (vlmEscalation.ts),
  *   3. mostCautious combine across the model's own verdict + the rules above.
+ *
+ * M23: dropped the `hfMembers` pass-through arg — HF auxiliary stages no longer
+ * exist, so the synthetic ensemble is a single-member shape (the VLM).
  */
 function combineVlmIntoAdjudication(args: {
   primary: VlmTriageCall;
   verifier: VlmTriageCall | null;
-  hfMembers: EnsembleMember[];
 }): VlmCombineResult {
-  const { primary, verifier, hfMembers } = args;
+  const { primary, verifier } = args;
   const subm = primary.submission;
 
   const modelVerdict = screenResultToVerdict(subm.tb_screen_result);
@@ -392,10 +385,7 @@ function combineVlmIntoAdjudication(args: {
     },
   };
 
-  // Synthetic ensemble: the VLM is one "member" with weight 1 in the UI; the
-  // optional HF members are passed through so the trace still shows whatever
-  // signal we got. Keeps VerdictCard's "Details & stats" useful without
-  // pretending the HF heads contributed to the decision.
+  // Synthetic ensemble: ONE member (the VLM). M23 — no auxiliary members.
   const vlmMember: EnsembleMember = {
     id: 'vlm',
     label: 'GPT-5.5 Vision (primary)',
@@ -410,21 +400,12 @@ function combineVlmIntoAdjudication(args: {
     samples: consistencyRan ? 2 : 1,
   };
 
-  const members: EnsembleMember[] = [vlmMember, ...hfMembers];
-  const returning = members.filter((m) => m.tb_prob !== null);
-  const probs = returning.map((m) => m.tb_prob as number);
-  const disagreement = probs.length > 1 ? Math.max(...probs) - Math.min(...probs) : 0;
-  const mean = probs.length ? probs.reduce((a, b) => a + b, 0) / probs.length : 0;
-  const variance = probs.length
-    ? probs.reduce((a, b) => a + (b - mean) ** 2, 0) / probs.length
-    : 0;
-  const replicateFallbackCount = members.filter((m) => m.provider_used === 'replicate').length;
   const ensemble: EnsembleResult = {
-    members,
+    members: [vlmMember],
     weightedScore: subm.tb_score_uncalibrated,
-    std: Math.sqrt(variance),
-    disagreement,
-    replicateFallbackCount,
+    std: 0,
+    disagreement: 0,
+    replicateFallbackCount: 0,
   };
 
   return { adjudication, ensemble };
@@ -433,16 +414,6 @@ function combineVlmIntoAdjudication(args: {
 /**
  * Run the full pipeline. Emits PipelineEvents live; resolves with the
  * aggregate PipelineRun for persistence + export.
- *
- * STAGE FLOW (M21):
- *   1. quality       — gpt-5.5 vision quality gate (unchanged from M1).
- *   2. ensemble.vlm  — gpt-5.5 vision primary triage (NEW; structured-output schema).
- *      + ensemble.vlm — verifier call when borderline (NEW; same stage id, different prompt).
- *      ensemble.tb / ensemble.general run best-effort when configured; reported in the trace.
- *   3. rag           — retrieval (unchanged).
- *   4. adjudicate    — REPLACED. On the VLM path the submission IS the adjudication;
- *      the stage emits done immediately with the synthesized verdict.
- *   5. verdict       — finalize.
  */
 export async function runPipeline(
   image: Blob,
@@ -465,11 +436,8 @@ export async function runPipeline(
     fallbackRate: 0,
     modelVersions: {
       perception_primary: 'gpt-5.5-vision (Responses API, structured-output)',
-      tb_classifier_hf: settings.overrides.tbClassifierHf || '(unset — VLM-primary path)',
-      general_cxr_hf: settings.overrides.generalCxrHf || '(unset)',
       adjudicator: settings.models.adjudicator,
       adjudicator_fallback: settings.models.adjudicatorFallback,
-      embedding_endpoint: settings.overrides.embeddingEndpointUrl || '(none)',
     },
   };
 
@@ -516,13 +484,7 @@ export async function runPipeline(
   }
 
   // ----------------------------------------------------------------------
-  // Stage 2 (M22) — LOCAL-MODE FAST PATH.
-  // When `settings.localMode === true` AND the FastAPI server at
-  // `settings.localServerUrl` is reachable, the local validated pipeline
-  // becomes the PRIMARY perception and gpt-5.5 vision is reduced to a borderline
-  // verifier. If the local call fails, we FALL THROUGH to the M21 VLM-primary
-  // path below — this means a user who toggles "local mode" but forgets to start
-  // the server still gets a usable run, with a banner from providerStatusStore.
+  // Stage 2a — LOCAL-MODE PRIMARY (when localMode on AND server reachable).
   // ----------------------------------------------------------------------
   if (settings.localMode) {
     emit({ type: 'stage_status', stage: 'ensemble.tb', status: 'running', note: 'local mode' });
@@ -531,7 +493,7 @@ export async function runPipeline(
       localResult = await localTriage(image, settings.localServerUrl);
       providerLog.push({
         stage: 'ensemble.tb',
-        provider_used: 'hf', // pseudo: closest existing enum; the actual provider id is recorded below
+        provider_used: 'local-triage',
         latency_ms: localResult.latency_ms.total ?? null,
         fell_back: false,
       });
@@ -551,7 +513,7 @@ export async function runPipeline(
         type: 'stage_status',
         stage: 'ensemble.tb',
         status: 'fallback',
-        note: 'local server unreachable; falling back to M21 VLM-primary path',
+        note: 'local server unreachable; falling back to gpt-5.5 vision primary',
       });
       localResult = null;
     }
@@ -599,10 +561,13 @@ export async function runPipeline(
       }
       emit({ type: 'ensemble_done', result: combined.ensemble });
 
-      // RAG still runs (display-only). No change to existing logic — falls
-      // through to the shared block by reusing the same path below.
-      let rag: RagResult = { neighbors: [], embedding_provider: null, skipped: true,
-        skipReason: 'Local mode: retrieval display-only and currently skipped (M22).' };
+      // RAG runs display-only when local mode is the source-of-truth path.
+      const rag: RagResult = {
+        neighbors: [],
+        embedding_provider: null,
+        skipped: true,
+        skipReason: 'Local mode: retrieval display-only and currently skipped (M22).',
+      };
       emit({ type: 'stage_status', stage: 'rag', status: 'skipped', note: rag.skipReason });
       emit({ type: 'rag_done', result: rag });
       run.rag = rag;
@@ -615,125 +580,15 @@ export async function runPipeline(
       emit({ type: 'stage_status', stage: 'verdict', status: 'done' });
       return run;
     }
-    // else: local call failed -> fall through to the M21 VLM-primary block
+    // else: local call failed -> fall through to the VLM-primary block
   }
 
   // ----------------------------------------------------------------------
-  // Stage 2 — Perception (M21 VLM-primary; used when local mode is off OR
-  // local mode is on but the server was unreachable).
+  // Stage 2b — VLM-PRIMARY (used when local mode is off OR local mode is on
+  // but the server was unreachable).
   //   2A. (primary)   VLM triage via Responses API structured-output.
   //   2B. (verifier)  ONE extra independent call ONLY if borderline.
-  //   2C. (auxiliary) HF TB head + general CXR head — best-effort. NOT decision-driving.
   // ----------------------------------------------------------------------
-  const classifyDeps = {
-    hfToken: settings.hfToken,
-    replicateToken: settings.replicateToken,
-  };
-
-  // 2C kicks off in parallel with the VLM call — purely advisory in the trace.
-  const tbMemberP: Promise<EnsembleMember | null> = (async () => {
-    if (!caps.hasHF || !settings.overrides.tbClassifierHf.trim()) return null;
-    emit({ type: 'stage_status', stage: 'ensemble.tb', status: 'running' });
-    try {
-      const r = await classifyWithFallback(image, buildTbStageConfig(settings), {
-        ...classifyDeps,
-        onFallback: (from, to, reason) => {
-          emit({ type: 'fallback_fired', stage: 'ensemble.tb', from, to });
-          emit({ type: 'stage_status', stage: 'ensemble.tb', status: 'fallback', note: reason });
-        },
-      });
-      const m: EnsembleMember = {
-        id: 'tb',
-        label: 'TB Classifier (auxiliary)',
-        weight: ENSEMBLE_WEIGHTS.tb,
-        status: 'done',
-        tb_prob: r.tb_prob,
-        provider_used: r.provider_used,
-        latency_ms: r.latency_ms,
-        raw: r.raw,
-      };
-      providerLog.push({
-        stage: 'ensemble.tb',
-        provider_used: r.provider_used,
-        latency_ms: r.latency_ms,
-        fell_back: r.provider_used === 'replicate',
-      });
-      emit({ type: 'ensemble_member', member: m });
-      emit({ type: 'stage_status', stage: 'ensemble.tb', status: 'done' });
-      return m;
-    } catch (err) {
-      const message = (err as Error).message;
-      const m: EnsembleMember = {
-        id: 'tb',
-        label: 'TB Classifier (auxiliary)',
-        weight: ENSEMBLE_WEIGHTS.tb,
-        status: 'error',
-        tb_prob: null,
-        provider_used: null,
-        latency_ms: null,
-        raw: null,
-        error: message,
-      };
-      providerLog.push({ stage: 'ensemble.tb', provider_used: null, latency_ms: null, fell_back: false });
-      emit({ type: 'ensemble_member', member: m });
-      emit({ type: 'error', stage: 'ensemble.tb', message });
-      emit({ type: 'stage_status', stage: 'ensemble.tb', status: 'error' });
-      return m;
-    }
-  })();
-
-  const generalMemberP: Promise<EnsembleMember | null> = (async () => {
-    if (!caps.hasHF || !settings.overrides.generalCxrHf.trim()) return null;
-    emit({ type: 'stage_status', stage: 'ensemble.general', status: 'running' });
-    try {
-      const r = await classifyWithFallback(image, buildGeneralStageConfig(settings), {
-        ...classifyDeps,
-        onFallback: (from, to, reason) => {
-          emit({ type: 'fallback_fired', stage: 'ensemble.general', from, to });
-          emit({ type: 'stage_status', stage: 'ensemble.general', status: 'fallback', note: reason });
-        },
-      });
-      const m: EnsembleMember = {
-        id: 'general',
-        label: 'General CXR (auxiliary)',
-        weight: ENSEMBLE_WEIGHTS.general,
-        status: 'done',
-        tb_prob: r.tb_prob,
-        provider_used: r.provider_used,
-        latency_ms: r.latency_ms,
-        raw: r.raw,
-      };
-      providerLog.push({
-        stage: 'ensemble.general',
-        provider_used: r.provider_used,
-        latency_ms: r.latency_ms,
-        fell_back: r.provider_used === 'replicate',
-      });
-      emit({ type: 'ensemble_member', member: m });
-      emit({ type: 'stage_status', stage: 'ensemble.general', status: 'done' });
-      return m;
-    } catch (err) {
-      const message = (err as Error).message;
-      const m: EnsembleMember = {
-        id: 'general',
-        label: 'General CXR (auxiliary)',
-        weight: ENSEMBLE_WEIGHTS.general,
-        status: 'error',
-        tb_prob: null,
-        provider_used: null,
-        latency_ms: null,
-        raw: null,
-        error: message,
-      };
-      providerLog.push({ stage: 'ensemble.general', provider_used: null, latency_ms: null, fell_back: false });
-      emit({ type: 'ensemble_member', member: m });
-      emit({ type: 'error', stage: 'ensemble.general', message });
-      emit({ type: 'stage_status', stage: 'ensemble.general', status: 'error' });
-      return m;
-    }
-  })();
-
-  // 2A. Primary VLM triage. THIS IS THE DECISION-DRIVING CALL.
   emit({ type: 'stage_status', stage: 'ensemble.vlm', status: 'running' });
   let primary: VlmTriageCall;
   try {
@@ -807,20 +662,15 @@ export async function runPipeline(
   }
   emit({ type: 'stage_status', stage: 'ensemble.vlm', status: 'done' });
 
-  // Wait for the optional HF auxiliary calls to settle so the trace shows them.
-  const [tbAux, generalAux] = await Promise.all([tbMemberP, generalMemberP]);
-  const hfMembers: EnsembleMember[] = [tbAux, generalAux].filter(
-    (m): m is EnsembleMember => m !== null,
-  );
-
   // Combine: VLM submission + verifier + escalation -> Adjudication.
-  const combined = combineVlmIntoAdjudication({ primary, verifier, hfMembers });
+  const combined = combineVlmIntoAdjudication({ primary, verifier });
   run.ensemble = combined.ensemble;
   emit({ type: 'ensemble_member', member: combined.ensemble.members[0] as EnsembleMember });
   emit({ type: 'ensemble_done', result: combined.ensemble });
 
   // ----------------------------------------------------------------------
   // Stage 3 — RAG retrieval (kNN over labeled corpus). Display-only on the VLM path.
+  // Replicate-only embeddings (M23 — HF endpoint removed).
   // ----------------------------------------------------------------------
   let rag: RagResult = { neighbors: [], embedding_provider: null, skipped: false };
   if (!caps.hasEmbedding) {
@@ -829,7 +679,7 @@ export async function runPipeline(
       embedding_provider: null,
       skipped: true,
       skipReason:
-        'No embedding provider configured. Set the CXR-Foundation HF Inference Endpoint URL or a Replicate CLIP fallback in Settings to enable retrieval.',
+        'No embedding provider configured. Set a Replicate token + CLIP model in Settings to enable retrieval.',
     };
     emit({ type: 'stage_status', stage: 'rag', status: 'skipped', note: rag.skipReason });
     emit({ type: 'rag_done', result: rag });
@@ -837,21 +687,15 @@ export async function runPipeline(
     emit({ type: 'stage_status', stage: 'rag', status: 'running' });
     try {
       const embed = await embedWithFallback(image, {
-        hfToken: settings.hfToken,
         replicateToken: settings.replicateToken,
-        endpointUrl: settings.overrides.embeddingEndpointUrl,
         replicateModel: settings.overrides.embeddingReplicate,
         replicateVersion: settings.overrides.embeddingReplicateVersion,
-        onFallback: (from, to, reason) => {
-          emit({ type: 'fallback_fired', stage: 'rag', from, to });
-          emit({ type: 'stage_status', stage: 'rag', status: 'fallback', note: reason });
-        },
       });
       providerLog.push({
         stage: 'rag',
         provider_used: embed.provider_used,
         latency_ms: embed.latency_ms,
-        fell_back: embed.provider_used === 'replicate',
+        fell_back: false,
       });
 
       const corpus = await getEmbeddedCases();
@@ -889,9 +733,7 @@ export async function runPipeline(
   // ----------------------------------------------------------------------
   // Stage 5 — finalize: fallback rate + verdict
   // ----------------------------------------------------------------------
-  const classifierStages = providerLog.filter((p) =>
-    ['ensemble.tb', 'ensemble.general', 'rag'].includes(p.stage),
-  );
+  const classifierStages = providerLog.filter((p) => p.stage === 'rag');
   const fellBack = classifierStages.filter((p) => p.fell_back).length;
   run.fallbackRate = classifierStages.length ? fellBack / classifierStages.length : 0;
   emit({ type: 'stage_status', stage: 'verdict', status: 'done' });

@@ -63,9 +63,8 @@ export async function importLabeledSet(
   const byName = new Map(imageFiles.map((f) => [basename(f.name), f]));
 
   const embeddingConfigured =
-    settings.overrides.embeddingEndpointUrl.trim().length > 0 ||
-    (settings.replicateToken.trim().length > 0 &&
-      settings.overrides.embeddingReplicate.trim().length > 0);
+    settings.replicateToken.trim().length > 0 &&
+    settings.overrides.embeddingReplicate.trim().length > 0;
 
   const summary: ImportSummary = {
     imported: 0,
@@ -87,13 +86,11 @@ export async function importLabeledSet(
     }
 
     let embedding: number[] | null = null;
-    let provider: 'hf' | 'replicate' | null = null;
+    let provider: 'replicate' | null = null;
     if (embeddingConfigured) {
       try {
         const e = await embedWithFallback(file, {
-          hfToken: settings.hfToken,
           replicateToken: settings.replicateToken,
-          endpointUrl: settings.overrides.embeddingEndpointUrl,
           replicateModel: settings.overrides.embeddingReplicate,
           replicateVersion: settings.overrides.embeddingReplicateVersion,
         });

@@ -179,6 +179,9 @@ describe('M22 orchestrator — four behaviors', () => {
     expect(ensemble.members).toHaveLength(1);
     expect(ensemble.members[0]?.label).toMatch(/Local validated head/);
     expect(ensemble.members[0]?.tb_prob).toBeCloseTo(0.92, 6);
+    // M23 — the local member's provider tag is now the real 'local-triage'
+    // instead of the legacy 'hf' pseudo-tag.
+    expect(ensemble.members[0]?.provider_used).toBe('local-triage');
     expect(adjudication.rationale).toMatch(/calibrated under T/);
     expect(adjudication.rationale).toMatch(/threshold/);
   });

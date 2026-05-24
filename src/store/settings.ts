@@ -14,7 +14,6 @@ type Listener = () => void;
 /** Local-dev BYOK seeding from .env.local. Empty strings in production builds. */
 const ENV_KEYS = {
   openaiKey: import.meta.env.VITE_OPENAI_KEY ?? '',
-  hfToken: import.meta.env.VITE_HF_TOKEN ?? '',
   replicateToken: import.meta.env.VITE_REPLICATE_TOKEN ?? '',
 };
 
@@ -23,7 +22,6 @@ function withEnvFallback(s: Settings): Settings {
   return {
     ...s,
     openaiKey: s.openaiKey || ENV_KEYS.openaiKey,
-    hfToken: s.hfToken || ENV_KEYS.hfToken,
     replicateToken: s.replicateToken || ENV_KEYS.replicateToken,
   };
 }
@@ -109,24 +107,21 @@ export function useSettings(): Settings {
 
 export interface Capabilities {
   hasOpenAI: boolean;
-  hasHF: boolean;
   hasReplicate: boolean;
-  /** Stage 3 can run only if an embedding provider is configured. */
+  /** Stage 3 (retrieval) can run only when a Replicate embedding model is configured. */
   hasEmbedding: boolean;
-  embeddingVia: 'hf-endpoint' | 'replicate' | null;
+  embeddingVia: 'replicate' | null;
 }
 
 export function deriveCapabilities(s: Settings): Capabilities {
   const hasReplicate = s.replicateToken.trim().length > 0;
-  const hasHfEndpoint = s.overrides.embeddingEndpointUrl.trim().length > 0;
   const hasReplicateEmbed =
     hasReplicate && s.overrides.embeddingReplicate.trim().length > 0;
   return {
     hasOpenAI: s.openaiKey.trim().length > 0,
-    hasHF: s.hfToken.trim().length > 0,
     hasReplicate,
-    hasEmbedding: hasHfEndpoint || hasReplicateEmbed,
-    embeddingVia: hasHfEndpoint ? 'hf-endpoint' : hasReplicateEmbed ? 'replicate' : null,
+    hasEmbedding: hasReplicateEmbed,
+    embeddingVia: hasReplicateEmbed ? 'replicate' : null,
   };
 }
 
