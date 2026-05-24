@@ -11,7 +11,7 @@
 // Providers
 // ---------------------------------------------------------------------------
 
-export type Provider = 'hf' | 'replicate' | 'openai';
+export type Provider = 'hf' | 'replicate' | 'openai' | 'local-triage';
 
 /** A provider that actually produced a classifier signal (never 'openai' here — GPT cards are tracked separately). */
 export type ClassifierProvider = 'hf' | 'replicate';
@@ -90,6 +90,17 @@ export interface Settings {
   acceptedDisclaimer: boolean;
   /** Fitted calibration params, or null to use the hard-coded SCREENING_POLICY. */
   calibration: CalibrationParams | null;
+  /**
+   * Milestone 22 — LOCAL-MODE TRIAGE.
+   * When `localMode === true` AND the FastAPI server at `localServerUrl` is
+   * reachable, the orchestrator uses the local validated pipeline (Rad-DINO +
+   * TXRV + TBHeadT2 + InactiveSequelaeHead under their calibrated temperatures)
+   * as the PRIMARY perception, and gpt-5.5 vision is reduced to a borderline
+   * second-opinion verifier. When `localMode === false` (default) OR the server
+   * is unreachable, the M21 VLM-primary flow runs unchanged.
+   */
+  localMode: boolean;
+  localServerUrl: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -241,10 +252,19 @@ export interface Adjudication {
    *
    *   - 'vlm-primary'        : gpt-5.5 vision is the primary perception (M21 default today).
    *   - 'onnx-primary'       : the local Rad-DINO + TXRV head ran (Phase B, not deployed yet).
+   *   - 'local-onnx-via-server' : Milestone 22 — the user's M4 ran the full validated
+   *                            pipeline (Rad-DINO + TXRV + TBHeadT2 + InactiveSequelaeHead
+   *                            under their calibrated temperatures) via the FastAPI server.
+   *                            GPT-5.5 vision is the second-opinion verifier on this path.
    *   - 'hf-ensemble'        : the legacy M1–M20 HF ensemble (kept for fallback compatibility).
    *   - 'perception-unavailable': nothing ran — same flag as `perception_unavailable: true`.
    */
-  perception_path?: 'vlm-primary' | 'onnx-primary' | 'hf-ensemble' | 'perception-unavailable';
+  perception_path?:
+    | 'vlm-primary'
+    | 'onnx-primary'
+    | 'local-onnx-via-server'
+    | 'hf-ensemble'
+    | 'perception-unavailable';
   /** Audit pins for the VLM path: prompt/schema versions + the model id the API returned. */
   vlm_audit?: {
     prompt_hash: string;

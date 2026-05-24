@@ -50,6 +50,11 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   acceptedDisclaimer: false,
   calibration: null,
+  // Milestone 22: off by default. The deployed (Netlify) build can't reach a
+  // user's localhost, so the production app stays on the M21 VLM-primary path
+  // unless the user explicitly toggles local mode AND runs the FastAPI server.
+  localMode: false,
+  localServerUrl: 'http://localhost:8000',
 };
 
 export const SETTINGS_STORAGE_KEY = 'tb-triage.settings.v1';
