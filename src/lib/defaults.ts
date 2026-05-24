@@ -50,11 +50,16 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   acceptedDisclaimer: false,
   calibration: null,
-  // Milestone 22: off by default. The deployed (Netlify) build can't reach a
-  // user's localhost, so the production app stays on the M21 VLM-primary path
-  // unless the user explicitly toggles local mode AND runs the FastAPI server.
-  localMode: false,
-  localServerUrl: 'http://localhost:8000',
+  // Milestone 22 (revised 2026-05-25): default depends on build mode.
+  // - `npm run dev` -> Local mode ON, URL points at :8001 (port 8000 is commonly
+  //   held on the dev machine by other tools — verified live). The user's own
+  //   trained model should be the default when developing locally; nothing else
+  //   makes sense given the validated 0.922-AUROC head is sitting on disk.
+  // - `npm run build` (Netlify) -> Local mode OFF; the deployed app can't reach
+  //   a user's localhost so it falls through to M21 VLM-primary unchanged.
+  // Settings page lets the user override either default at any time.
+  localMode: import.meta.env.DEV,
+  localServerUrl: import.meta.env.DEV ? 'http://localhost:8001' : 'http://localhost:8000',
 };
 
 export const SETTINGS_STORAGE_KEY = 'tb-triage.settings.v1';
