@@ -1,0 +1,133 @@
+ENDPOINT: radiographic-TB-pattern (NOT bacteriologically-confirmed active TB). Research preview.
+sources: {'montgomery': 138, 'qatar': 4193, 'shenzhen': 662, 'tbx11k': 8099}
+total 13092  pos=1747  neg=11345  dup-cluster guard=ON
+PRIOR-FIXED T2 knobs (NOT tuned on test folds): g_min=0.25 zone_prior_init=0.4 r0=5.0 (cap 8.0) lambda_box=0.2 lambda_distill=0.2 lambda_tv=0.01 distill_T=2.0
+
+--- LODO (fusion-only) — radiographic-TB-pattern, vs radiographic reference ---
+  holdout=montgomery     n=  138 pos=  58  AUC=0.889 [95% CI 0.83-0.94]  ECE=0.201  [cleaner external]
+      cold-start  (frozen thr)  sens=0.897 [95% CI 0.79-0.96] spec=0.637
+      + local recalibration     sens(median of 20 splits)=0.976 [IQR 0.93-0.98; median-split 95% CI 0.87-1.00] spec=0.259  (eval n_pos=41)
+  holdout=qatar          n= 4193 pos= 693  AUC=0.938 [95% CI 0.93-0.95]  ECE=0.035  [LEAKAGE-PRONE: re-mix source]
+      cold-start  (frozen thr)  sens=0.740 [95% CI 0.71-0.77] spec=0.961
+      + local recalibration     sens(median of 20 splits)=0.953 [IQR 0.94-0.97; median-split 95% CI 0.93-0.97] spec=0.620  (eval n_pos=485)
+  holdout=shenzhen       n=  662 pos= 336  AUC=0.910 [95% CI 0.89-0.93]  ECE=0.160  [cleaner external]
+      cold-start  (frozen thr)  sens=0.896 [95% CI 0.86-0.93] spec=0.653
+      + local recalibration     sens(median of 20 splits)=0.936 [IQR 0.92-0.96; median-split 95% CI 0.90-0.96] spec=0.504  (eval n_pos=236)
+  holdout=tbx11k         n= 8099 pos= 660  AUC=0.917 [95% CI 0.91-0.93]  ECE=0.149  [LEAKAGE-PRONE: re-mix source]
+      cold-start  (frozen thr)  sens=0.771 [95% CI 0.74-0.80] spec=0.879
+      + local recalibration     sens(median of 20 splits)=0.948 [IQR 0.94-0.96; median-split 95% CI 0.93-0.97] spec=0.682  (eval n_pos=462)
+  >>> mean LODO AUC (fusion-only) = 0.914
+  >>> WORST-FOLD external (non-remix) recalibrated sens (fusion-only) = 0.936 [95% CI 0.90-0.96]  holdout=shenzhen  <-- acceptance gate
+
+--- LODO (fusion+attention) — radiographic-TB-pattern, vs radiographic reference ---
+  holdout=montgomery     n=  138 pos=  58  AUC=0.904 [95% CI 0.85-0.96]  ECE=0.091  [cleaner external]
+      cold-start  (frozen thr)  sens=0.793 [95% CI 0.67-0.89] spec=0.863
+      + local recalibration     sens(median of 20 splits)=0.976 [IQR 0.90-1.00; median-split 95% CI 0.87-1.00] spec=0.330  (eval n_pos=41)
+  holdout=qatar          n= 4193 pos= 693  AUC=0.944 [95% CI 0.93-0.95]  ECE=0.025  [LEAKAGE-PRONE: re-mix source]
+      cold-start  (frozen thr)  sens=0.714 [95% CI 0.68-0.75] spec=0.977
+      + local recalibration     sens(median of 20 splits)=0.953 [IQR 0.94-0.97; median-split 95% CI 0.93-0.97] spec=0.613  (eval n_pos=485)
+  holdout=shenzhen       n=  662 pos= 336  AUC=0.955 [95% CI 0.94-0.97]  ECE=0.050  [cleaner external]
+      cold-start  (frozen thr)  sens=0.747 [95% CI 0.70-0.79] spec=0.979
+      + local recalibration     sens(median of 20 splits)=0.939 [IQR 0.92-0.96; median-split 95% CI 0.91-0.97] spec=0.726  (eval n_pos=236)
+  holdout=tbx11k         n= 8099 pos= 660  AUC=0.933 [95% CI 0.92-0.94]  ECE=0.126  [LEAKAGE-PRONE: re-mix source]
+      cold-start  (frozen thr)  sens=0.821 [95% CI 0.79-0.85] spec=0.882
+      + local recalibration     sens(median of 20 splits)=0.942 [IQR 0.93-0.96; median-split 95% CI 0.92-0.96] spec=0.749  (eval n_pos=462)
+  >>> mean LODO AUC (fusion+attention) = 0.934
+  >>> WORST-FOLD external (non-remix) recalibrated sens (fusion+attention) = 0.939 [95% CI 0.91-0.97]  holdout=shenzhen  <-- acceptance gate
+
+attention ablation: fusion-only 0.914 -> fusion+attention 0.934 (delta +0.020)
+
+--- deployment utility (radiographic endpoint; mean of cleaner external folds: sens=0.96, spec=0.53) ---
+ prevalence     PPV     NPV   tests/flagged case
+        1%    2.0% 99.918%                 49.8
+        2%    4.0% 99.834%                 25.2
+        9%   16.7% 99.203%                  6.0  <- presumptive/ACF band
+       12%   21.7% 98.904%                  4.6  <- presumptive/ACF band
+       15%   26.4% 98.586%                  3.8  <- presumptive/ACF band
+  NOTE: PPV/NPV are for the RADIOGRAPHIC-TB label, not bacteriologically-confirmed active TB.
+
+--- LODO (T2[fusion+distill]) — radiographic-TB-pattern, vs radiographic reference ---
+  holdout=montgomery     n=  138 pos=  58  AUC=0.919 [95% CI 0.87-0.96]  ECE=0.133  [cleaner external]
+      cold-start  (frozen thr)  sens=0.879 [95% CI 0.77-0.95] spec=0.787
+      + local recalibration     sens(median of 20 splits)=0.951 [IQR 0.93-0.98; median-split 95% CI 0.83-0.99] spec=0.518  (eval n_pos=41)
+  holdout=qatar          n= 4193 pos= 693  AUC=0.924 [95% CI 0.91-0.94]  ECE=0.042  [LEAKAGE-PRONE: re-mix source]
+      cold-start  (frozen thr)  sens=0.681 [95% CI 0.64-0.72] spec=0.965
+      + local recalibration     sens(median of 20 splits)=0.945 [IQR 0.94-0.96; median-split 95% CI 0.92-0.96] spec=0.584  (eval n_pos=485)
+  holdout=shenzhen       n=  662 pos= 336  AUC=0.895 [95% CI 0.87-0.92]  ECE=0.222  [cleaner external]
+      cold-start  (frozen thr)  sens=0.878 [95% CI 0.84-0.91] spec=0.696
+      + local recalibration     sens(median of 20 splits)=0.943 [IQR 0.92-0.96; median-split 95% CI 0.90-0.97] spec=0.439  (eval n_pos=236)
+  holdout=tbx11k         n= 8099 pos= 660  AUC=0.909 [95% CI 0.90-0.92]  ECE=0.127  [LEAKAGE-PRONE: re-mix source]
+      cold-start  (frozen thr)  sens=0.780 [95% CI 0.75-0.81] spec=0.865
+      + local recalibration     sens(median of 20 splits)=0.940 [IQR 0.93-0.96; median-split 95% CI 0.91-0.96] spec=0.647  (eval n_pos=462)
+  >>> mean LODO AUC (T2[fusion+distill]) = 0.912
+  >>> WORST-FOLD external (non-remix) recalibrated sens (T2[fusion+distill]) = 0.943 [95% CI 0.90-0.97]  holdout=shenzhen  <-- acceptance gate
+
+--- LODO (T2[+zonal]) — radiographic-TB-pattern, vs radiographic reference ---
+  holdout=montgomery     n=  138 pos=  58  AUC=0.886 [95% CI 0.82-0.94]  ECE=0.245  [cleaner external]
+      cold-start  (frozen thr)  sens=0.845 [95% CI 0.73-0.93] spec=0.588
+      + local recalibration     sens(median of 20 splits)=0.976 [IQR 0.95-1.00; median-split 95% CI 0.87-1.00] spec=0.402  (eval n_pos=41)
+  holdout=qatar          n= 4193 pos= 693  AUC=0.961 [95% CI 0.95-0.97]  ECE=0.032  [LEAKAGE-PRONE: re-mix source]
+      cold-start  (frozen thr)  sens=0.760 [95% CI 0.73-0.79] spec=0.974
+      + local recalibration     sens(median of 20 splits)=0.951 [IQR 0.93-0.96; median-split 95% CI 0.93-0.97] spec=0.772  (eval n_pos=485)
+  holdout=shenzhen       n=  662 pos= 336  AUC=0.937 [95% CI 0.92-0.95]  ECE=0.104  [cleaner external]
+      cold-start  (frozen thr)  sens=0.878 [95% CI 0.84-0.91] spec=0.816
+      + local recalibration     sens(median of 20 splits)=0.953 [IQR 0.93-0.97; median-split 95% CI 0.92-0.98] spec=0.667  (eval n_pos=236)
+  holdout=tbx11k         n= 8099 pos= 660  AUC=0.933 [95% CI 0.92-0.94]  ECE=0.127  [LEAKAGE-PRONE: re-mix source]
+      cold-start  (frozen thr)  sens=0.823 [95% CI 0.79-0.85] spec=0.882
+      + local recalibration     sens(median of 20 splits)=0.950 [IQR 0.94-0.96; median-split 95% CI 0.93-0.97] spec=0.698  (eval n_pos=462)
+  >>> mean LODO AUC (T2[+zonal]) = 0.929
+  >>> WORST-FOLD external (non-remix) recalibrated sens (T2[+zonal]) = 0.953 [95% CI 0.92-0.98]  holdout=shenzhen  <-- acceptance gate
+
+--- LODO (T2[+box]) — radiographic-TB-pattern, vs radiographic reference ---
+  holdout=montgomery     n=  138 pos=  58  AUC=0.907 [95% CI 0.85-0.95]  ECE=0.191  [cleaner external]  box_te=0 (no boxes here)
+      cold-start  (frozen thr)  sens=0.879 [95% CI 0.77-0.95] spec=0.662
+      + local recalibration     sens(median of 20 splits)=0.951 [IQR 0.87-0.98; median-split 95% CI 0.83-0.99] spec=0.411  (eval n_pos=41)
+  holdout=qatar          n= 4193 pos= 693  AUC=0.952 [95% CI 0.94-0.96]  ECE=0.031  [LEAKAGE-PRONE: re-mix source]  box_te=0 (no boxes here)
+      cold-start  (frozen thr)  sens=0.740 [95% CI 0.71-0.77] spec=0.970
+      + local recalibration     sens(median of 20 splits)=0.949 [IQR 0.93-0.96; median-split 95% CI 0.93-0.97] spec=0.720  (eval n_pos=485)
+  holdout=shenzhen       n=  662 pos= 336  AUC=0.928 [95% CI 0.91-0.95]  ECE=0.208  [cleaner external]  box_te=0 (no boxes here)
+      cold-start  (frozen thr)  sens=0.842 [95% CI 0.80-0.88] spec=0.874
+      + local recalibration     sens(median of 20 splits)=0.945 [IQR 0.91-0.95; median-split 95% CI 0.91-0.97] spec=0.553  (eval n_pos=236)
+  holdout=tbx11k         n= 8099 pos= 660  AUC=0.927 [95% CI 0.92-0.94]  ECE=0.145  [LEAKAGE-PRONE: re-mix source]  box_te=660
+      cold-start  (frozen thr)  sens=0.802 [95% CI 0.77-0.83] spec=0.881
+      + local recalibration     sens(median of 20 splits)=0.948 [IQR 0.93-0.96; median-split 95% CI 0.92-0.96] spec=0.676  (eval n_pos=462)
+  >>> mean LODO AUC (T2[+box]) = 0.929
+  >>> WORST-FOLD external (non-remix) recalibrated sens (T2[+box]) = 0.945 [95% CI 0.91-0.97]  holdout=shenzhen  <-- acceptance gate
+
+--- LODO (T2[FULL]) — radiographic-TB-pattern, vs radiographic reference ---
+  holdout=montgomery     n=  138 pos=  58  AUC=0.883 [95% CI 0.82-0.94]  ECE=0.187  [cleaner external]  box_te=0 (no boxes here)
+      cold-start  (frozen thr)  sens=0.845 [95% CI 0.73-0.93] spec=0.662
+      + local recalibration     sens(median of 20 splits)=0.976 [IQR 0.91-0.98; median-split 95% CI 0.87-1.00] spec=0.214  (eval n_pos=41)
+  holdout=qatar          n= 4193 pos= 693  AUC=0.957 [95% CI 0.95-0.96]  ECE=0.032  [LEAKAGE-PRONE: re-mix source]  box_te=0 (no boxes here)
+      cold-start  (frozen thr)  sens=0.804 [95% CI 0.77-0.83] spec=0.959
+      + local recalibration     sens(median of 20 splits)=0.949 [IQR 0.94-0.96; median-split 95% CI 0.93-0.97] spec=0.752  (eval n_pos=485)
+  holdout=shenzhen       n=  662 pos= 336  AUC=0.934 [95% CI 0.92-0.95]  ECE=0.189  [cleaner external]  box_te=0 (no boxes here)
+      cold-start  (frozen thr)  sens=0.881 [95% CI 0.84-0.91] spec=0.816
+      + local recalibration     sens(median of 20 splits)=0.958 [IQR 0.92-0.97; median-split 95% CI 0.92-0.98] spec=0.575  (eval n_pos=236)
+  holdout=tbx11k         n= 8099 pos= 660  AUC=0.927 [95% CI 0.92-0.94]  ECE=0.119  [LEAKAGE-PRONE: re-mix source]  box_te=660
+      cold-start  (frozen thr)  sens=0.782 [95% CI 0.75-0.81] spec=0.898
+      + local recalibration     sens(median of 20 splits)=0.948 [IQR 0.94-0.95; median-split 95% CI 0.92-0.97] spec=0.705  (eval n_pos=462)
+  >>> mean LODO AUC (T2[FULL]) = 0.925
+  >>> WORST-FOLD external (non-remix) recalibrated sens (T2[FULL]) = 0.958 [95% CI 0.92-0.98]  holdout=shenzhen  <-- acceptance gate
+
+--- deployment utility (radiographic endpoint; mean of cleaner external folds: sens=0.97, spec=0.39) ---
+ prevalence     PPV     NPV   tests/flagged case
+        1%    1.6% 99.915%                 63.0
+        2%    3.2% 99.828%                 31.7
+        9%   13.6% 99.170%                  7.3  <- presumptive/ACF band
+       12%   17.9% 98.859%                  5.6  <- presumptive/ACF band
+       15%   22.0% 98.528%                  4.6  <- presumptive/ACF band
+  NOTE: PPV/NPV are for the RADIOGRAPHIC-TB label, not bacteriologically-confirmed active TB.
+
+=== ABLATION SUMMARY (mean LODO AUROC; baseline = current fusion+attention) ===
+  baseline fusion-only        0.914
+  baseline fusion+attention   0.934   <-- T2 'before'
+  T2[fusion+distill]         0.912   (delta vs +att -0.022; non-box-fold AUROC 0.913)
+  T2[+zonal]                 0.929   (delta vs +att -0.005; non-box-fold AUROC 0.928)
+  T2[+box]                   0.929   (delta vs +att -0.005; non-box-fold AUROC 0.929)
+  T2[FULL]                   0.925   (delta vs +att -0.009; non-box-fold AUROC 0.924)
+  HONESTY: box supervision is 100% TBX11K. 'non-box-fold AUROC' is the mean over folds
+  whose held-out site has NO boxes (montgomery/shenzhen/qatar) — where the box lever
+  cannot have leaked. Compare it across rows to see the box lever's HONEST effect.
+
+T2 head -> data/tb_head_t2.pt ; temperature=1.591 ; threshold@95%sens=0.610 (in-sample/optimistic — the honest numbers are the LODO folds above; re-fit per site)
