@@ -91,18 +91,35 @@ def _harmonize(g: np.ndarray) -> np.ndarray:
 # ============================================================================================
 # GEOMETRY (pure numpy — unit-tested in training/test_extract_geom.py)
 #
-# COORDINATE FRAMES. Three frames matter:
+# COORDINATE FRAMES. Four frames matter:
 #   (1) ORIGINAL  — the source image as on disk; TBX11K boxes in data.csv are xywh in this frame
 #                   (TBX11K originals are 512x512, so original==512x512 for boxed images).
 #   (2) HARMONIZED — after `_harmonize` resizes the shorter side to WORKING_RES (uniform scale).
 #   (3) CROPPED   — after `seg_crop` crops the harmonized image to the dilated-lung bbox + margin.
-#                   The Rad-DINO processor then UNIFORMLY resizes this crop to its input size, so
-#                   [0,1]-normalized coordinates in the CROPPED frame map directly to patch cells.
+#   (4) LETTERBOXED — the CROPPED frame symmetrically PADDED to a SQUARE (side S = max(cw, ch)) before
+#                   the Rad-DINO processor. THIS is the frame the patch grid lives in (see below).
 #
-# The 8x8 patch grid is over the CROPPED frame. So a TBX11K box must be carried original -> harmonized
+# WHY LETTERBOX (2026-05-24 fix — center-crop misregistration, found by independent review).
+#   The Rad-DINO AutoImageProcessor (preprocessor_config.json) does do_resize size.shortest_edge=518
+#   THEN do_center_crop crop_size 518x518. For a NON-SQUARE crop the resize only makes the SHORTER
+#   side 518 (longer side stays >518), and the center-crop then CHOPS the long-axis edge strips. So
+#   the 37x37 patch tokens span ONLY THE CENTER SQUARE of the cropped rectangle — NOT the full rect.
+#   Mapping a box/mask in [0,1] over the FULL cropped rectangle to the 8x8 grid is therefore wrong on
+#   the long axis (misregistered by up to ~0.4-0.9 grid cells; apical/costophrenic content in the
+#   chopped strips would be assigned to rows Rad-DINO never sees). The 9 original square-crop tests
+#   missed it because center-crop is a NO-OP when cropped width == height.
+#   FIX: symmetrically pad the cropped frame to a square (letterbox) BEFORE the processor. Then
+#   shortest_edge=518 + center_crop(518) is a TRUE uniform resize with no chopping, and [0,1] over the
+#   LETTERBOXED square maps linearly to the grid. The IDENTICAL letterbox is applied to the box coords
+#   (rasterize_boxes_to_grid) and to the lung/hilus masks (zone_matrix_from_masks) so grid_label and
+#   zones live in the SAME letterboxed-square frame as the tokens. Padding bars map to empty cells
+#   (no box, zero lung membership), preserving ALL lung content incl. the apices.
+#
+# The 8x8 patch grid is over the LETTERBOXED frame. So a TBX11K box is carried original -> harmonized
 # (scale by WORKING_RES/min(H0,W0); done by the caller, which knows the source) -> cropped (subtract
-# the crop offset) -> [0,1] in the cropped frame -> 8x8 cells. `rasterize_boxes_to_grid` takes boxes
-# ALREADY in the HARMONIZED frame plus the crop box, and finishes the crop->[0,1]->grid mapping.
+# the crop offset) -> letterboxed (ADD the symmetric pad offset) -> [0,1] over the square side S ->
+# 8x8 cells. `rasterize_boxes_to_grid` takes boxes ALREADY in the HARMONIZED frame plus the crop box,
+# and finishes the crop->letterbox->[0,1]->grid mapping (the letterbox is computed from crop_box).
 #
 # TOKEN ORDER. The main loop pools Rad-DINO tokens via
 #   grid = tok.transpose(1,2).reshape(B, D, g, g);  patches = adaptive_avg_pool2d(grid,(8,8))
@@ -159,6 +176,38 @@ def scale_boxes_orig_to_harmonized(
     return [(x * s, y * s, w * s, h * s) for (x, y, w, h) in boxes_xywh]
 
 
+def letterbox_square_params(crop_box: tuple[int, int, int, int]) -> tuple[int, int, int]:
+    """Given a crop_box (y0, y1, x0, x1) -> (S, pad_x, pad_y) for the SQUARE letterbox of the cropped
+    frame. S = max(cw, ch) is the square side; pad_x/pad_y are the SYMMETRIC top-left pad offsets that
+    center the cropped content in the SxS square (pad_before = (S - extent) // 2, mirroring how the
+    processor's center_crop floors its offset — so resize-to-shortest-edge + center_crop is a true
+    uniform resize with no chopping). The cropped content occupies [pad_x, pad_x+cw) x [pad_y, pad_y+ch)
+    in the letterboxed frame; everything else is padding (maps to empty grid cells / zero lung)."""
+    y0, y1, x0, x1 = crop_box
+    cw = max(1, x1 - x0)
+    ch = max(1, y1 - y0)
+    S = max(cw, ch)
+    pad_x = (S - cw) // 2
+    pad_y = (S - ch) // 2
+    return S, pad_x, pad_y
+
+
+def letterbox_to_square(arr: np.ndarray, crop_box: tuple[int, int, int, int], pad_value: float = 0.0) -> np.ndarray:
+    """Symmetrically pad a cropped-frame array (image [H,W] / [H,W,C] or a mask [H,W]) to the SxS square
+    defined by `letterbox_square_params(crop_box)`. The cropped content is centered; the padding bars
+    use `pad_value` (image background = 0 / zero lung membership). Returns the SxS (or SxSxC) array.
+
+    `arr`'s height/width MUST equal the crop_box extent (ch x cw); this keeps the image, the box
+    coordinate frame, and the masks padded IDENTICALLY so all three live in the same letterboxed frame.
+    """
+    S, pad_x, pad_y = letterbox_square_params(crop_box)
+    ch, cw = arr.shape[0], arr.shape[1]
+    pad = [(pad_y, S - ch - pad_y), (pad_x, S - cw - pad_x)]
+    if arr.ndim == 3:
+        pad.append((0, 0))
+    return np.pad(arr, pad, mode="constant", constant_values=pad_value)
+
+
 def rasterize_boxes_to_grid(
     boxes_xywh: list[tuple[float, float, float, float]],
     crop_box: tuple[int, int, int, int],
@@ -166,7 +215,7 @@ def rasterize_boxes_to_grid(
     G: int = PATCH_GRID,
     mode: str = "soft",
 ) -> np.ndarray:
-    """Rasterize active-TB boxes (in the HARMONIZED frame) onto a GxG patch grid over the CROPPED frame.
+    """Rasterize active-TB boxes (in the HARMONIZED frame) onto a GxG patch grid over the LETTERBOXED frame.
 
     Args:
         boxes_xywh:    list of (x, y, w, h) boxes in HARMONIZED-frame pixels (top-left origin).
@@ -177,13 +226,16 @@ def rasterize_boxes_to_grid(
                        partly covered gets a fractional value. 'hard' = 1.0 if any overlap, else 0.
 
     Returns [G, G] float in [0,1], indexed [gy, gx], = max over boxes of per-cell coverage. A box fully
-    outside the crop contributes nothing (all-zero). The crop transform (subtract crop offset, normalize
-    by cropped-frame extent) is applied here.
+    outside the crop contributes nothing (all-zero). The crop transform (subtract crop offset), the
+    SYMMETRIC LETTERBOX pad (add pad_x/pad_y), and normalization by the SQUARE side S are applied here
+    so the grid registers EXACTLY with the Rad-DINO patch tokens (which see the letterboxed square).
+    A box that falls entirely in the padding bars contributes nothing.
     """
     W_harm, H_harm = harmonized_wh
     y0, y1, x0, x1 = crop_box
     ch = max(1, y1 - y0)   # cropped-frame height
     cw = max(1, x1 - x0)   # cropped-frame width
+    S, pad_x, pad_y = letterbox_square_params(crop_box)  # square side + symmetric pad offsets
     grid = np.zeros((G, G), dtype=np.float32)
     if not boxes_xywh:
         return grid
@@ -200,9 +252,9 @@ def rasterize_boxes_to_grid(
         cy1 = min(float(ch), hy1 - y0)
         if cx1 <= cx0 or cy1 <= cy0:
             continue  # box does not intersect the crop -> contributes nothing
-        # -> [0,1] in cropped frame, then to grid-cell coordinates
-        gx0, gx1 = cx0 / cw * G, cx1 / cw * G
-        gy0, gy1 = cy0 / ch * G, cy1 / ch * G
+        # -> LETTERBOXED frame (add symmetric pad offset), then [0,1] over the SQUARE side S -> grid cells
+        gx0, gx1 = (cx0 + pad_x) / S * G, (cx1 + pad_x) / S * G
+        gy0, gy1 = (cy0 + pad_y) / S * G, (cy1 + pad_y) / S * G
         for gy in range(int(np.floor(gy0)), min(G, int(np.ceil(gy1)))):
             cell_oy = min(gy + 1.0, gy1) - max(float(gy), gy0)  # vertical overlap of cell [gy,gy+1]
             if cell_oy <= 0:
@@ -234,7 +286,11 @@ def zone_matrix_from_masks(
     G: int = PATCH_GRID,
     min_lung_frac: float = 0.05,
 ) -> np.ndarray:
-    """Build a [G*G, N_ZONES] soft zone-membership matrix from masks in the CROPPED frame.
+    """Build a [G*G, N_ZONES] soft zone-membership matrix from masks in the LETTERBOXED (square) frame.
+
+    The masks are expected already padded to the SxS letterbox (see `seg_crop`/`letterbox_to_square`),
+    so they register with the Rad-DINO patch tokens. The padding bars are zero, fall below
+    `min_lung_frac`, and become all-zero (background) rows automatically — no special handling needed.
 
     Zones: 6 lung zones (RUZ,RMZ,RLZ,LUZ,LMZ,LLZ) split L/R by the per-row lung centroid, then within
     EACH hemithorax cut vertically at 1/3 and 2/3 of THAT hemithorax's lung vertical extent. 7th zone
@@ -346,19 +402,26 @@ def main(mode: str = "main") -> None:
     def seg_crop(harm_list: list[np.ndarray]):
         """Soft-mask + crop each harmonized image to the dilated-lung bbox + 18% margin.
 
+        The cropped frame is LETTERBOXED (symmetrically padded) to a SQUARE before the Rad-DINO
+        processor so its shortest_edge resize + center_crop is a true uniform resize (no chopping) —
+        see the COORDINATE FRAMES note. 'img' and the masks are returned in this LETTERBOXED frame; the
+        box rasterizer recomputes the same letterbox from 'crop_box', so all three stay registered.
+
         Returns a list of per-image dicts:
-          {'img': RGB PIL of the cropped frame (fed to Rad-DINO),
+          {'img': RGB PIL of the LETTERBOXED-square cropped frame (fed to Rad-DINO),
            'crop_box': (y0,y1,x0,x1) crop in the HARMONIZED frame (y1/x1 exclusive),
            'harm_wh': (W_harm, H_harm) harmonized image size,
-           'lung_crop': lung-only soft mask [ch,cw] in the CROPPED frame (for zones),
-           'hilus_crop': hilus+mediastinum soft mask [ch,cw] in the CROPPED frame (for the 7th zone)}.
+           'lung_crop': lung-only soft mask [S,S] in the LETTERBOXED frame (for zones),
+           'hilus_crop': hilus+mediastinum soft mask [S,S] in the LETTERBOXED frame (for the 7th zone)}.
         When seg is unavailable, crop_box is the whole image and masks are None (zone matrix -> zeros)."""
         if seg is None or not lung_idx:
             res = []
             for c in harm_list:
+                cb = (0, c.shape[0], 0, c.shape[1])
+                lb = letterbox_to_square(c, cb, pad_value=0.0)  # pad whole harmonized frame to square
                 res.append({
-                    "img": Image.fromarray(cv2.cvtColor(c, cv2.COLOR_GRAY2RGB)),
-                    "crop_box": (0, c.shape[0], 0, c.shape[1]),
+                    "img": Image.fromarray(cv2.cvtColor(lb, cv2.COLOR_GRAY2RGB)),
+                    "crop_box": cb,
                     "harm_wh": (c.shape[1], c.shape[0]),
                     "lung_crop": None, "hilus_crop": None,
                 })
@@ -393,12 +456,20 @@ def main(mode: str = "main") -> None:
                 y0, y1, x0, x1 = 0, H, 0, W
                 soft = c
             # soft masks resized to the harmonized frame, then cropped with the SAME window so they
-            # align pixel-for-pixel with the cropped image -> the 8x8 patch grid.
+            # align pixel-for-pixel with the cropped image.
             lung_crop = cv2.resize(lung_s[bi], (W, H))[y0:y1, x0:x1] if lung_s is not None else None
             hilus_crop = cv2.resize(hil_s[bi], (W, H))[y0:y1, x0:x1] if hil_s is not None else None
+            # LETTERBOX: pad the cropped image AND the masks IDENTICALLY to the SxS square (pad=0 =
+            # background / zero lung) so they register pixel-for-pixel with the Rad-DINO patch tokens,
+            # which see the letterboxed square (not the raw non-square crop). Box coords get the same
+            # letterbox inside rasterize_boxes_to_grid (recomputed from crop_box).
+            cb = (y0, y1, x0, x1)
+            soft = letterbox_to_square(soft, cb, pad_value=0.0)
+            lung_crop = letterbox_to_square(lung_crop, cb, pad_value=0.0) if lung_crop is not None else None
+            hilus_crop = letterbox_to_square(hilus_crop, cb, pad_value=0.0) if hilus_crop is not None else None
             out.append({
                 "img": Image.fromarray(cv2.cvtColor(soft, cv2.COLOR_GRAY2RGB)),
-                "crop_box": (y0, y1, x0, x1),
+                "crop_box": cb,
                 "harm_wh": (W, H),
                 "lung_crop": lung_crop, "hilus_crop": hilus_crop,
             })

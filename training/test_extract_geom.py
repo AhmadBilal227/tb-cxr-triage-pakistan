@@ -18,6 +18,8 @@ from extract_features import (  # noqa: E402
     scale_boxes_orig_to_harmonized,
     parse_bbox_field,
     zone_matrix_from_masks,
+    letterbox_square_params,
+    letterbox_to_square,
 )
 
 
@@ -41,6 +43,85 @@ def test_box_at_known_crop_maps_to_expected_cells():
     grid2 = rasterize_boxes_to_grid(boxes2, crop_box, harm_wh, G=8, mode="soft")
     assert abs(grid2[2, 3] - 1.0) < 1e-5, grid2
     assert grid2.sum() == grid2[2, 3]
+
+
+def test_nonsquare_crop_letterbox_box_lands_in_correct_cell():
+    """REGRESSION for the center-crop misregistration bug. The Rad-DINO processor resizes the SHORTER
+    side to 518 then center-crops to 518x518, so for a NON-SQUARE crop the 37x37 tokens only span the
+    CENTER SQUARE — a box mapped over the full cropped rectangle is misregistered on the long axis.
+    The letterbox pads the cropped frame to a square FIRST, making the box->grid map exact.
+
+    Crop: x0=200,x1=968 -> cw=768; y0=0,y1=1024 -> ch=1024 (TALLER than wide). So S=max=1024, the
+    SHORT (width) axis is padded: pad_x=(1024-768)//2=128 = exactly ONE 128px grid cell, pad_y=0.
+    The cropped content occupies letterboxed grid columns 1..6; columns 0 and 7 are pure padding.
+    A box at the cropped-frame TOP-LEFT cell [x 0..128, y 0..128] therefore lands at letterboxed
+    grid cell gx=1, gy=0 -> grid[0,1] (NOT grid[0,0] as the buggy full-rect mapping would place it)."""
+    crop_box = (0, 1024, 200, 968)      # ch=1024, cw=768
+    harm_wh = (1024, 1280)              # full harmonized frame big enough to contain the crop
+    S, pad_x, pad_y = letterbox_square_params(crop_box)
+    assert (S, pad_x, pad_y) == (1024, 128, 0), (S, pad_x, pad_y)
+    # box in HARMONIZED frame at the crop's top-left, one cropped-cell (128px) wide/tall
+    boxes = [(200.0, 0.0, 128.0, 128.0)]   # cropped x[0..128] y[0..128]
+    grid = rasterize_boxes_to_grid(boxes, crop_box, harm_wh, G=8, mode="soft")
+    assert grid.shape == (8, 8)
+    assert abs(grid[0, 1] - 1.0) < 1e-5, ("expected hot cell at [0,1] after letterbox", grid[0, 1])
+    assert grid.sum() == grid[0, 1], f"only [0,1] should be hot, sum={grid.sum()}\n{grid}"
+    # the two pure-padding columns (leftmost gx=0 and rightmost gx=7) must be entirely empty
+    assert grid[:, 0].sum() == 0.0, ("left pad column not empty", grid[:, 0])
+    assert grid[:, 7].sum() == 0.0, ("right pad column not empty", grid[:, 7])
+
+    # a box at the cropped-frame TOP-RIGHT cell [x 640..768, y 0..128] -> letterboxed x[768..896]
+    # -> gx=6 (the last content column), gy=0 -> grid[0,6]; still inside content, not in pad col 7.
+    boxes_tr = [(200.0 + 640.0, 0.0, 128.0, 128.0)]
+    grid_tr = rasterize_boxes_to_grid(boxes_tr, crop_box, harm_wh, G=8, mode="soft")
+    assert abs(grid_tr[0, 6] - 1.0) < 1e-5, ("expected hot cell at [0,6]", grid_tr[0, 6])
+    assert grid_tr.sum() == grid_tr[0, 6], f"only [0,6] should be hot, sum={grid_tr.sum()}\n{grid_tr}"
+
+
+def test_letterbox_to_square_pads_image_and_mask_consistently():
+    """`letterbox_to_square` must pad image (2D/3D) and masks to the SAME SxS square with the SAME
+    symmetric offsets, padding bars = pad_value (0). This is what keeps image+masks+boxes registered."""
+    crop_box = (0, 1024, 200, 968)   # ch=1024, cw=768 -> S=1024, pad_x=128, pad_y=0
+    img = np.full((1024, 768), 7.0, dtype="float32")    # cropped 2D image
+    lb = letterbox_to_square(img, crop_box, pad_value=0.0)
+    assert lb.shape == (1024, 1024), lb.shape
+    assert np.all(lb[:, :128] == 0.0) and np.all(lb[:, -128:] == 0.0), "pad columns must be 0"
+    assert np.all(lb[:, 128:896] == 7.0), "content must be preserved in the center"
+    # 3-channel image keeps its channel axis
+    rgb = np.full((1024, 768, 3), 5.0, dtype="float32")
+    lb3 = letterbox_to_square(rgb, crop_box, pad_value=0.0)
+    assert lb3.shape == (1024, 1024, 3), lb3.shape
+
+
+def test_square_crop_letterbox_is_noop():
+    """For a SQUARE crop the letterbox does NOTHING (pad=0), so the new math equals the old behavior —
+    this is why the original square-crop tests still pass unchanged."""
+    crop_box = (100, 900, 200, 1000)  # 800x800 square
+    S, pad_x, pad_y = letterbox_square_params(crop_box)
+    assert (S, pad_x, pad_y) == (800, 0, 0)
+    img = np.arange(800 * 800, dtype="float32").reshape(800, 800)
+    assert np.array_equal(letterbox_to_square(img, crop_box), img)
+
+
+def test_nonsquare_zone_matrix_padding_rows_are_empty():
+    """A non-square lung mask, once letterboxed to a square, must yield all-zero zone rows for the
+    padding patches (no lung membership leaks into the padding bars)."""
+    crop_box = (0, 1024, 200, 968)   # S=1024, pad_x=128, pad_y=0
+    # lungs fill the cropped content region; pad columns will be added by letterbox
+    lung_c = np.zeros((1024, 768), dtype="float32")
+    lung_c[100:900, 80:340] = 1.0     # image-left lung block
+    lung_c[100:900, 430:690] = 1.0    # image-right lung block
+    hil_c = np.zeros((1024, 768), dtype="float32")
+    hil_c[450:600, 340:430] = 1.0
+    lung_sq = letterbox_to_square(lung_c, crop_box, pad_value=0.0)
+    hil_sq = letterbox_to_square(hil_c, crop_box, pad_value=0.0)
+    assert lung_sq.shape == (1024, 1024)
+    Z = zone_matrix_from_masks(lung_sq, hil_sq, G=PATCH_GRID).reshape(PATCH_GRID, PATCH_GRID, N_ZONES)
+    # leftmost and rightmost grid columns are pure padding (128px = exactly one 128px cell) -> all-zero
+    assert Z[:, 0, :].sum() == 0.0, ("left pad column has zone membership", Z[:, 0, :])
+    assert Z[:, 7, :].sum() == 0.0, ("right pad column has zone membership", Z[:, 7, :])
+    # the lung content in the interior still populates zones
+    assert Z[:, 1:7, :].sum() > 0.0, "expected non-empty lung zones in the content region"
 
 
 def test_soft_fractional_coverage():
