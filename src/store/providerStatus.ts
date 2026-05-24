@@ -5,12 +5,12 @@ import type { Provider } from '@/lib/types';
  * In-memory, ephemeral per-provider status (NOT persisted to localStorage).
  *
  * Records the result of the LAST call to each provider so the Settings drawer
- * can show a human-readable status line (e.g. "HF Inference: last call 401
+ * can show a human-readable status line (e.g. "Replicate: last call 401
  * unauthorized — token missing or invalid"). Without this the user has to open
  * DevTools to see why perception failed.
  *
  * Recorded by:
- *   - the HF / Replicate / OpenAI provider clients on success/failure
+ *   - the Replicate / OpenAI / local-triage provider clients on success/failure
  *   - the orchestrator on a fully-unconfigured run (no-token short-circuit)
  *
  * Consumed by:
@@ -19,6 +19,10 @@ import type { Provider } from '@/lib/types';
  * Failure-mode tags are kept stable so tests + UI can match on them. The
  * `note` carries optional model-id / endpoint / status-code context for the
  * user to act on without DevTools.
+ *
+ * M23 removed Hugging Face from runtime — the `'hf'` provider was dropped from
+ * the Record. The `'model-unsupported'` state remains useful for Replicate
+ * (retired model versions return a similar shape).
  */
 
 export type ProviderStatusState =
@@ -47,7 +51,6 @@ const INITIAL_STATUS: ProviderStatus = { state: 'unknown', at: null };
 type Listener = () => void;
 
 let state: Record<Provider, ProviderStatus> = {
-  hf: { ...INITIAL_STATUS },
   replicate: { ...INITIAL_STATUS },
   openai: { ...INITIAL_STATUS },
   'local-triage': { ...INITIAL_STATUS },
@@ -75,7 +78,6 @@ export const providerStatusStore = {
   /** Test seam: reset all to 'unknown'. */
   reset(): void {
     state = {
-      hf: { ...INITIAL_STATUS },
       replicate: { ...INITIAL_STATUS },
       openai: { ...INITIAL_STATUS },
       'local-triage': { ...INITIAL_STATUS },

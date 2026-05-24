@@ -15,13 +15,6 @@ export class ProviderError extends Error {
   }
 }
 
-export class HfError extends ProviderError {
-  constructor(message: string, status?: number, raw?: unknown) {
-    super(message, 'hf', status, raw);
-    this.name = 'HfError';
-  }
-}
-
 export class ReplicateError extends ProviderError {
   constructor(message: string, status?: number, raw?: unknown) {
     super(message, 'replicate', status, raw);

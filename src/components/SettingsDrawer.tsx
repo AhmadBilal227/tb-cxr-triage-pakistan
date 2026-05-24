@@ -75,20 +75,9 @@ export function SettingsDrawer({
                 value={s.openaiKey}
                 onChange={(v) => settingsStore.set({ openaiKey: v })}
                 placeholder="sk-..."
-                hint="Used for quality gate, VLM read, and adjudication (orchestration only)."
+                hint="Used for the quality gate AND the gpt-5.5 vision primary (or borderline verifier when local mode is on)."
               />
               <ProviderStatusBadge provider="openai" hasKey={caps.hasOpenAI} status={providerStatus.openai} />
-            </div>
-            <div className="space-y-1">
-              <Field
-                label="Hugging Face token"
-                type="password"
-                value={s.hfToken}
-                onChange={(v) => settingsStore.set({ hfToken: v })}
-                placeholder="hf_..."
-                hint="Primary perception layer (serverless Inference API). Many TB models have been retired from the hf-inference router — set a working slug in Model overrides if your verdict shows 'model not available'."
-              />
-              <ProviderStatusBadge provider="hf" hasKey={caps.hasHF} status={providerStatus.hf} />
             </div>
             <div className="space-y-1">
               <Field
@@ -97,15 +86,10 @@ export function SettingsDrawer({
                 value={s.replicateToken}
                 onChange={(v) => settingsStore.set({ replicateToken: v })}
                 placeholder="r8_..."
+                hint="Optional — enables a BYO Replicate classifier slot and the Replicate CLIP embedding for retrieval. Leave empty if you only use local mode + gpt-5.5 vision."
               />
               <ProviderStatusBadge provider="replicate" hasKey={caps.hasReplicate} status={providerStatus.replicate} />
             </div>
-            {!caps.hasReplicate && (
-              <div className="flex items-start gap-2 rounded-md border border-border bg-surface-2 p-2 text-[10px] text-muted">
-                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-provider-replicate" />
-                <span>No Replicate token — per-stage fallback is disabled. If an HF model is cold or errors, that stage will fail instead of falling back.</span>
-              </div>
-            )}
           </div>
 
           {/* Local mode (Milestone 22) */}
@@ -118,18 +102,13 @@ export function SettingsDrawer({
               Model overrides
             </CollapsibleTrigger>
             <CollapsibleContent className="space-y-3 pt-3">
-              <Field
-                label="TB Classifier — HF model"
-                value={s.overrides.tbClassifierHf}
-                onChange={(v) => settingsStore.setOverride({ tbClassifierHf: v })}
-              />
               <div className="grid grid-cols-2 gap-2">
                 <Field
                   label="TB Classifier — Replicate slug"
                   value={s.overrides.tbClassifierReplicate}
                   onChange={(v) => settingsStore.setOverride({ tbClassifierReplicate: v })}
                   placeholder="owner/tb-cnn"
-                  hint="Push a TB CNN via Cog (see README) or paste a published slug."
+                  hint="Optional BYO classifier. Push a TB CNN via Cog (see README) or paste a published slug."
                 />
                 <Field
                   label="…version hash"
@@ -139,39 +118,12 @@ export function SettingsDrawer({
                 />
               </div>
 
-              <Field
-                label="General CXR — HF model"
-                value={s.overrides.generalCxrHf}
-                onChange={(v) => settingsStore.setOverride({ generalCxrHf: v })}
-              />
-              <div className="grid grid-cols-2 gap-2">
-                <Field
-                  label="General CXR — Replicate slug"
-                  value={s.overrides.generalCxrReplicate}
-                  onChange={(v) => settingsStore.setOverride({ generalCxrReplicate: v })}
-                  placeholder="owner/cxr-cls"
-                />
-                <Field
-                  label="…version hash"
-                  value={s.overrides.generalCxrReplicateVersion}
-                  onChange={(v) => settingsStore.setOverride({ generalCxrReplicateVersion: v })}
-                  placeholder="version id"
-                />
-              </div>
-
-              <Field
-                label="CXR Embedding — HF Inference Endpoint URL"
-                value={s.overrides.embeddingEndpointUrl}
-                onChange={(v) => settingsStore.setOverride({ embeddingEndpointUrl: v })}
-                placeholder="https://xxxx.endpoints.huggingface.cloud"
-                hint="google/cxr-foundation is NOT on free serverless — paste your dedicated Inference Endpoint URL. See README."
-              />
               <div className="grid grid-cols-2 gap-2">
                 <Field
                   label="Embedding — Replicate CLIP slug"
                   value={s.overrides.embeddingReplicate}
                   onChange={(v) => settingsStore.setOverride({ embeddingReplicate: v })}
-                  placeholder="e.g. CLIP-ViT-L"
+                  placeholder="e.g. krthr/clip-embeddings"
                 />
                 <Field
                   label="…version hash"

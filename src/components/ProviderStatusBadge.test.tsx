@@ -1,12 +1,15 @@
 /**
- * ProviderStatusBadge per-provider status display test (Milestone 20).
+ * ProviderStatusBadge per-provider status display test.
  *
  * The badge translates the in-memory provider-status state into a calm,
- * actionable line in the Settings drawer ("hf: last call model-unsupported —
- * 400 model not available on this provider — update the model id in Settings").
- * This is the diagnostic the production user was missing on 2026-05-24:
- * they saw 400s in the browser console but had no way to see WHICH key was
- * the problem from inside the app.
+ * actionable line in the Settings drawer. This is the diagnostic the
+ * production user was missing on the 2026-05-24 Netlify failure: they saw
+ * 400s in the browser console but had no way to see WHICH key was the
+ * problem from inside the app.
+ *
+ * Milestone 23 removed Hugging Face — the previous HF test rows were
+ * rewritten to assert the same diagnostic behavior on the Replicate path
+ * (which inherits the same `classifyHttpFailure` dispatcher).
  *
  * Renders via react-dom/server against the standalone ProviderStatusBadge
  * module — no Radix Dialog tree, no localStorage shim required.
@@ -22,7 +25,7 @@ function render(props: Parameters<typeof ProviderStatusBadge>[0]): string {
 describe('ProviderStatusBadge', () => {
   it('renders nothing when state=unknown and no key is set', () => {
     const html = render({
-      provider: 'hf',
+      provider: 'replicate',
       hasKey: false,
       status: { state: 'unknown', at: null },
     });
@@ -31,11 +34,11 @@ describe('ProviderStatusBadge', () => {
 
   it('shows "configured · not yet called" when state=unknown and a key is set', () => {
     const html = render({
-      provider: 'hf',
+      provider: 'replicate',
       hasKey: true,
       status: { state: 'unknown', at: null },
     });
-    expect(html).toContain('data-testid="provider-status-hf"');
+    expect(html).toContain('data-testid="provider-status-replicate"');
     expect(html).toContain('configured');
     expect(html).toContain('not yet called');
   });
@@ -63,27 +66,27 @@ describe('ProviderStatusBadge', () => {
 
   it('surfaces a 401 unauthorized failure with the human reason', () => {
     const html = render({
-      provider: 'hf',
+      provider: 'replicate',
       hasKey: true,
       status: {
         state: 'unauthorized',
-        note: '401 unauthorized — token missing or invalid (model codewithdark/vit-chest-xray)',
+        note: '401 unauthorized — token missing or invalid',
         at: Date.now(),
       },
     });
-    expect(html).toContain('data-testid="provider-status-hf"');
+    expect(html).toContain('data-testid="provider-status-replicate"');
     expect(html).toContain('last call unauthorized');
     expect(html).toContain('401');
     expect(html).toContain('token missing or invalid');
   });
 
-  it('surfaces a 400 model-unsupported failure (the production 2026-05-24 case)', () => {
+  it('surfaces a model-unsupported failure (retired Replicate version, etc.)', () => {
     const html = render({
-      provider: 'hf',
+      provider: 'replicate',
       hasKey: true,
       status: {
         state: 'model-unsupported',
-        note: '400 model not available on this provider — update the model id in Settings (model Owos/tb-classifier)',
+        note: '400 model not available on this provider — update the model id in Settings',
         at: Date.now(),
       },
     });

@@ -1,32 +1,43 @@
 # Project: AI-Native TB Chest X-Ray Triage
 
-Frontend-only (Vite + React 18 + TypeScript strict, **no `any`**), BYOK, IndexedDB. Three providers
-called directly from the browser. Research preview — **not a medical device.**
+Frontend-only (Vite + React 18 + TypeScript strict, **no `any`**), BYOK, IndexedDB. Two runtime
+providers called directly from the browser (**OpenAI** + an optional **Replicate** BYO slot) plus the
+M22 **local-mode FastAPI server** running the validated trained model. Research preview — **not a
+medical device.**
 
-**Perception path as of M22 (2026-05-24):** TWO paths now, chosen at runtime by `settings.localMode`.
+**Perception path as of M23 (2026-05-25 — HF removed):** TWO paths, chosen at runtime by
+`settings.localMode`.
 
 - **LOCAL MODE (M22, primary on the user's machine):** when `settings.localMode === true` AND the FastAPI
-  server at `settings.localServerUrl` (default `http://localhost:8000`) is reachable, the **validated
-  pipeline** runs (Rad-DINO + TorchXRayVision + `TBHeadT2` + `InactiveSequelaeHead` under their fitted
-  calibration constants from `data/tb_threshold_t2.json` + `data/tb_inactive_meta.json`). `tb_prob`
-  comes back **calibrated under T**; the verdict is decided at the validated `thr_at_95sens=0.6105`;
-  the M19 `applySequelaeEscalation` consumes `s_inactive`; gpt-5.5 vision is reduced to a BORDERLINE
-  second-opinion verifier that fires only on `tb_prob ∈ [0.35, 0.65]` OR `s_inactive ≥ 0.7126`, and
-  forces ABSTAIN on disagreement (never overrides a confident verdict). Single-source-of-truth Python
-  module: `training/triage_core.py`. CORS narrow (localhost:5173 + 127.0.0.1:5173 only).
-  `Adjudication.perception_path = 'local-onnx-via-server'`.
+  server at `settings.localServerUrl` (default `http://localhost:8001` in dev, `:8000` in prod) is
+  reachable, the **validated pipeline** runs (Rad-DINO + TorchXRayVision + `TBHeadT2` +
+  `InactiveSequelaeHead` under their fitted calibration constants from `data/tb_threshold_t2.json` +
+  `data/tb_inactive_meta.json`). `tb_prob` comes back **calibrated under T**; the verdict is decided
+  at the validated `thr_at_95sens=0.6105`; the M19 `applySequelaeEscalation` consumes `s_inactive`;
+  gpt-5.5 vision is reduced to a BORDERLINE second-opinion verifier that fires only on
+  `tb_prob ∈ [0.35, 0.65]` OR `s_inactive ≥ 0.7126`, and forces ABSTAIN on disagreement (never
+  overrides a confident verdict). Single-source-of-truth Python module: `training/triage_core.py`.
+  CORS narrow (localhost:5173 + 127.0.0.1:5173 only). `Adjudication.perception_path =
+  'local-onnx-via-server'`.
 
-- **VLM-PRIMARY (M21, deployed-app fallback):** the deployed Netlify app cannot reach a user's
+- **VLM-PRIMARY (M21, deployed-app default):** the deployed Netlify app cannot reach a user's
   localhost, so it stays on the M21 path: OpenAI `gpt-5.5` vision via the Responses API's
-  structured-output mode IS the primary perception (see `src/lib/pipeline/vlmTriage.ts`). Hugging
-  Face / Replicate classifier heads remain best-effort fallbacks but the free hf-inference router no
-  longer hosts `microsoft/rad-dino` or the M1 default TB heads, so on the deployed app today they
-  are inert. The local validated ONNX heads in `public/models/` (M19: AUROC 0.922 LODO) are on disk
-  but cannot execute in the browser without a feature-extraction backbone (Phase B gap).
+  structured-output mode IS the primary perception (see `src/lib/pipeline/vlmTriage.ts`). The local
+  validated ONNX heads in `public/models/` (M19: AUROC 0.922 LODO) are on disk but cannot execute in
+  the browser without a feature-extraction backbone (Phase B gap).
+
+**M23 cleanup (2026-05-25 — HF gone):** Hugging Face was removed from the runtime path entirely.
+The free hf-inference router dropped every default classifier we relied on (`Owos/tb-classifier`,
+`keremberke/yolov8m-chest-xray-classification`) and the backbones (`microsoft/rad-dino`,
+`torchxrayvision/...`). We had a strictly better path on user machines (M22 local mode) and a working
+deployed default (M21 VLM), so HF in the browser was dead weight that surfaced red errors. The HF
+provider client, settings field, status badge, model-id overrides, and orchestrator auxiliary stages
+were all deleted. The `training/` directory still loads Rad-DINO + TXRV via the HF Python library
+**offline** from `~/.cache/huggingface/` — that is a file-system read at engine startup, not a
+runtime API call.
 
 The orchestrator falls through from LOCAL to VLM-PRIMARY if the local server is unreachable, so a
-user who toggles "Local mode" but forgets to start the server still gets a usable run (banner from
-`providerStatusStore` + the M21 disclosure unchanged).
+user who toggles "Local mode" but forgets to start the server still gets a usable run.
 
 ## Non-negotiable ethos (carry this into every change)
 - **Report real numbers.** Measure against ground truth (the `/validate` route + `scripts/accuracy-test*.mjs`). Lead with the honest metric (sensitivity is the safety-critical one for a screen), never a flattering one. The project's whole identity is intellectual honesty about model quality.
@@ -36,9 +47,9 @@ user who toggles "Local mode" but forgets to start the server still gets a usabl
 - Keep strict TS clean (`npm run build`), tests green (`npm test`), and a11y ≥95.
 
 ## Orientation
-- Contract: `src/lib/types.ts` (`ClassifierResult` = `{ tb_prob, raw, provider_used, latency_ms }`; `Adjudication.perception_path` extends to `'local-onnx-via-server' | 'vlm-primary' | 'onnx-primary' | 'hf-ensemble' | 'perception-unavailable'` since M22; `Settings.localMode` + `localServerUrl` since M22).
-- Providers: `src/lib/providers/` (`classify.ts` = HF→Replicate fallback seam; `openai.ts` = Responses API including structured-output / json_schema; **`localTriage.ts` (M22)** = POST `/triage` to the local FastAPI server with four-way error tagging in `providerStatusStore`).
-- Pipeline: `src/lib/pipeline/orchestrator.ts` — M22: when `settings.localMode === true` AND the local server is reachable, `localTriage` IS the primary perception and gpt-5.5 vision is a BORDERLINE verifier (consistency-check disagreement forces ABSTAIN). Otherwise M21 VLM-primary path runs unchanged.
+- Contract: `src/lib/types.ts` (`ClassifierResult` = `{ tb_prob, raw, provider_used, latency_ms }`; `Provider = 'replicate' | 'openai' | 'local-triage'` post-M23; `Adjudication.perception_path` = `'local-onnx-via-server' | 'vlm-primary' | 'onnx-primary' | 'perception-unavailable'`; `Settings.localMode` + `localServerUrl` since M22; M23 removed `Settings.hfToken` + the HF model-id override fields).
+- Providers: `src/lib/providers/` (`classify.ts` = Replicate-only embedding seam post-M23 — `classifyWithFallback` was deleted with HF; `openai.ts` = Responses API including structured-output / json_schema; **`localTriage.ts` (M22)** = POST `/triage` to the local FastAPI server with four-way error tagging in `providerStatusStore`).
+- Pipeline: `src/lib/pipeline/orchestrator.ts` — M22+M23 single-path perception: when `settings.localMode === true` AND the local server is reachable, `localTriage` IS the primary perception and gpt-5.5 vision is a BORDERLINE verifier (consistency-check disagreement forces ABSTAIN); otherwise the M21 VLM-primary path runs. There is no longer an "ensemble" — M23 deleted the HF auxiliary stages.
 - Local triage core (M22, server-side): `training/triage_core.py` (single source of truth — `TriageEngine` warm-loaded once, calibration constants READ from JSON not pasted, preprocessing IMPORTED from `extract_features.py` not paraphrased), `training/triage_cli.py` (--human / --json / --include-gpt), `training/server.py` (FastAPI, narrow CORS).
 - VLM triage (M21, deployed-app fallback): `src/lib/pipeline/vlmTriage.ts` (`submit_triage` schema + boring policy prompt + forced-abstain rails + borderline-band predicate) and `src/lib/pipeline/vlmEscalation.ts` (path-specific escalation, SEPARATE 0.5 threshold from the M19 ONNX 0.7126 — DO NOT mix).
 - Sequelae escalation (M19): `src/lib/pipeline/sequelaeEscalation.ts` — pure rule, consumed on the M22 local-mode path now that `s_inactive` is produced by the local server. (Browser-direct ONNX still gated on Phase B feature pathway.)

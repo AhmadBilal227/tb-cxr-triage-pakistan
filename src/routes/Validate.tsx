@@ -108,10 +108,9 @@ export default function Validate(): JSX.Element {
         disclaimer: DISCLAIMER,
         generatedAt: new Date().toISOString(),
         model_versions: {
-          tb_classifier_hf: settings.overrides.tbClassifierHf,
-          general_cxr_hf: settings.overrides.generalCxrHf,
+          tb_classifier_replicate: settings.overrides.tbClassifierReplicate || '(none)',
           adjudicator: settings.models.adjudicator,
-          embedding_endpoint: settings.overrides.embeddingEndpointUrl || '(none)',
+          embedding_replicate: settings.overrides.embeddingReplicate || '(none)',
         },
         metrics,
         items,
@@ -146,7 +145,7 @@ export default function Validate(): JSX.Element {
     y += 4;
     line(`Generated: ${new Date().toISOString()}`, 9);
     line(`Adjudicator: ${settings.models.adjudicator}`, 9);
-    line(`TB classifier (HF): ${settings.overrides.tbClassifierHf}`, 9);
+    line(`TB classifier (Replicate): ${settings.overrides.tbClassifierReplicate || '(none)'}`, 9);
     y += 4;
     line(`Total: ${metrics.total}   Decided: ${metrics.nDecided}   Abstain: ${metrics.nAbstain}   Halted: ${metrics.nHalted}`, 10);
     line(`Accuracy: ${fmt(metrics.accuracy)}   Sensitivity: ${fmt(metrics.sensitivity)}   Specificity: ${fmt(metrics.specificity)}`, 10);

@@ -48,6 +48,9 @@ export function NoKeysBannerView({
 export function NoKeysBanner({ onOpenSettings }: { onOpenSettings: () => void }): JSX.Element | null {
   const settings = useSettings();
   const caps = deriveCapabilities(settings);
-  const hasAny = caps.hasOpenAI || caps.hasHF || caps.hasReplicate;
+  // M23 removed Hugging Face. Local mode (the validated trained-model path) is
+  // also a valid "configured" state — when it's on the user has perception even
+  // without any remote keys, so the BYOK banner stays silent.
+  const hasAny = caps.hasOpenAI || caps.hasReplicate || settings.localMode;
   return <NoKeysBannerView hasAny={hasAny} onOpenSettings={onOpenSettings} />;
 }

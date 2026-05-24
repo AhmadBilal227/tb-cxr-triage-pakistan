@@ -2,43 +2,28 @@ import type { Settings } from './types';
 
 /**
  * Sensible defaults per spec. Model slots that the user MUST provide themselves
- * (Replicate fallbacks, the CXR-Foundation Inference Endpoint) are intentionally
- * left empty so the UI can surface a clear "unconfigured" message rather than
- * silently pretending a fallback exists.
+ * (Replicate fallbacks) are intentionally left empty so the UI can surface a
+ * clear "unconfigured" message rather than silently pretending a fallback exists.
+ *
+ * Milestone 23 removed Hugging Face from the runtime path: the free hf-inference
+ * router dropped every default classifier the project relied on (`Owos/tb-classifier`
+ * and `keremberke/yolov8m-chest-xray-classification` retired in 2024-2025, and the
+ * backbones `microsoft/rad-dino` + `torchxrayvision/densenet121-res224-all` are not
+ * deployed on the router either). The validated path is the M22 local-mode server
+ * running the deployed trained model; the deployed app falls back to gpt-5.5 vision
+ * (M21); Replicate remains a configurable BYOK fallback.
  */
 export const DEFAULT_SETTINGS: Settings = {
   openaiKey: '',
-  hfToken: '',
   replicateToken: '',
   overrides: {
-    // 2026-05-24 (M20): Owos/tb-classifier and keremberke/yolov8m-chest-xray-classification
-    // were BOTH retired from the free hf-inference router (HTTP 400 "Model not supported by
-    // provider hf-inference" even with a valid token — reproduced live during M20). They are
-    // still browsable on the Hub but no longer deployed for serverless inference.
-    //
-    // The TB-specific slot is left BLANK by design: a sweep of TB-tagged classifiers on the
-    // Hub (sukhmani1303/tuberculosis-vit-model, runaksh/chest_xray_tuberculosis_detection)
-    // showed none currently deployed by hf-inference. BYOK: paste a working slug, or
-    // configure a Replicate fallback (see Settings → Model overrides). The UI surfaces the
-    // unconfigured state explicitly per the BYOK contract.
-    tbClassifierHf: '',
+    // Optional Replicate TB classifier — BYO; empty means "not configured".
     tbClassifierReplicate: '',
     tbClassifierReplicateVersion: '',
 
-    // The general-CXR slot points at the most-downloaded hf-inference-LIVE chest-xray
-    // classifier (verified HTTP 200 on the router with a small PNG, 2026-05-24). It is a
-    // CheXpert-fine-tuned ViT producing 5 labels (Cardiomegaly/Edema/Consolidation/Pneumonia/
-    // No Finding). The TB-specific signal is intentionally null — `parseGeneralCxrTbProb`
-    // returns 0 because none of those labels matches the TB/abnormality regex, which is the
-    // honest behavior: this head provides no TB signal on its own.
-    generalCxrHf: 'codewithdark/vit-chest-xray',
-    generalCxrReplicate: '',
-    generalCxrReplicateVersion: '',
-
-    embeddingEndpointUrl: '',
-    // Default to a verified public CLIP model on Replicate so retrieval works out of
-    // the box when a Replicate token is present (CXR-Foundation needs a paid HF endpoint).
-    // Output shape: { embedding: number[768] }.
+    // Default to a verified public CLIP model on Replicate so retrieval works
+    // out of the box when a Replicate token is present. Output shape:
+    // { embedding: number[768] }.
     embeddingReplicate: 'krthr/clip-embeddings',
     embeddingReplicateVersion:
       '1c0371070cb827ec3c7f2f28adcdde54b50dcd239aa6faea0bc98b174ef03fb4',
@@ -64,11 +49,21 @@ export const DEFAULT_SETTINGS: Settings = {
 
 export const SETTINGS_STORAGE_KEY = 'tb-triage.settings.v1';
 
-/** Ensemble vote weights (Stage 2). Must sum to 1 across the three members. */
+/**
+ * Ensemble vote weights — fallback for calibration when there aren't enough
+ * samples to fit fusion weights. Post-M23 the orchestrator does NOT call this
+ * map (the pipeline is single-perception: local OR vlm), but `calibration.ts`
+ * still references it as the default-weights anchor for the `/validate` flow
+ * across the historical EnsembleMemberId union (`tb`/`general`/`vlm`).
+ *
+ * Numbers reflect the prior intuition: VLM carries most weight today (it is the
+ * deployed primary), with the historical TB-classifier slot kept as a non-zero
+ * stub so a future BYO Replicate model can slot back in without re-fitting.
+ */
 export const ENSEMBLE_WEIGHTS = {
-  tb: 0.5, // TB-specific classifier — primary signal
-  general: 0.2, // general CXR pathology distribution
-  vlm: 0.3, // GPT-5.5 independent vision read
+  tb: 0.2,
+  general: 0.0,
+  vlm: 0.8,
 } as const;
 
 /** Deterministic auto-abstain thresholds (Stage 4 guardrails). */
