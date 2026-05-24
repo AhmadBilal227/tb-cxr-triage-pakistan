@@ -36,6 +36,7 @@ import {
   VlmResult,
   vlmToProb,
 } from './prompts';
+import { applySequelaeEscalation } from './sequelaeEscalation';
 
 type Emit = (e: PipelineEvent) => void;
 
@@ -438,15 +439,28 @@ export async function runPipeline(
     if (noPerception) {
       guardrailReasons.push('no perception model returned a result');
     }
-    const finalVerdict = mostCautious(
+    const baseVerdict = mostCautious(
       policy.verdict,
       modelVerdict,
       guardrailReasons.length > 0 ? 'abstain' : 'no_tb',
       noPerception ? 'abstain' : 'no_tb',
     );
+    // Sequelae escalate-not-clear (Milestone 19). Today `s_inactive` is always null —
+    // the browser-side feature pathway for Rad-DINO + TXRV is not built (Phase B gap,
+    // documented in CASE_STUDY M19). The interface is locked down so wiring is a
+    // one-line change once those features land.
+    const sInactive: number | null = null;
+    const seqEsc = applySequelaeEscalation({
+      verdict: baseVerdict,
+      tbProb: ensemble.weightedScore,
+      sInactive,
+      borderlineHigh: cal?.conformal.tauHigh,
+    });
+    const finalVerdict = seqEsc.verdict;
     const reasons = [
       ...(policy.verdict !== 'no_tb' && policy.reason ? [policy.reason] : []),
       ...guardrailReasons,
+      ...(seqEsc.escalated && seqEsc.reason ? [seqEsc.reason] : []),
     ];
     const escalated = finalVerdict !== modelVerdict;
     adjudication = {

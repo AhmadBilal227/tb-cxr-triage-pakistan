@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "T": 1.5914955557015147,
+  "thr_at_95sens": 0.6104530692100525,
+  "T_sequelae": 1.1312716480691851,
+  "seed": 0,
+  "git_sha": "32e63a0e141f31b993f4fe4e71beee9e0ba8c3df",
+  "exported_at": "2026-05-24T16:01:10.709546+00:00",
+  "head_input_schema": {
+    "tb_head_t2": {
+      "inputs": {
+        "cls": {
+          "shape": [
+            "B",
+            768
+          ],
+          "dtype": "float32",
+          "doc": "Rad-DINO CLS token"
+        },
+        "patches": {
+          "shape": [
+            "B",
+            64,
+            768
+          ],
+          "dtype": "float32",
+          "doc": "Rad-DINO patch tokens, row-major 8x8 grid"
+        },
+        "txrv": {
+          "shape": [
+            "B",
+            1042
+          ],
+          "dtype": "float32",
+          "doc": "TXRV DenseNet pooled features [0:1024] + 18 named-finding logits [1024:]"
+        },
+        "zones": {
+          "shape": [
+            "B",
+            64,
+            7
+          ],
+          "dtype": "float32",
+          "doc": "Soft zone membership (RUZ, RMZ, RLZ, LUZ, LMZ, LLZ, HILAR); per-patch rows sum<=1"
+        }
+      },
+      "outputs": {
+        "tb_logit": {
+          "shape": [
+            "B"
+          ],
+          "dtype": "float32",
+          "doc": "Pre-temperature image logit; browser applies sigmoid((logit)/T) using top-level T."
+        }
+      }
+    },
+    "sequelae_head": {
+      "inputs": {
+        "cls": {
+          "shape": [
+            "B",
+            768
+          ],
+          "dtype": "float32"
+        },
+        "patches": {
+          "shape": [
+            "B",
+            64,
+            768
+          ],
+          "dtype": "float32"
+        },
+        "txrv": {
+          "shape": [
+            "B",
+            1042
+          ],
+          "dtype": "float32"
+        }
+      },
+      "outputs": {
+        "s_inactive": {
+          "shape": [
+            "B"
+          ],
+          "dtype": "float32",
+          "doc": "Temperature-scaled probability of an inactive/sequelae pattern. Consume as an ESCALATE-not-clear feature."
+        }
+      }
+    }
+  },
+  "notes": "tb_head_t2: output is a pre-temperature logit; T (top-level) is the calibration temperature, thr_at_95sens is the 0.95-sensitivity threshold on the calibrated probability. sequelae_head: output already has T_sequelae baked in (probability ready to consume). Each .onnx is paired with an .onnx.data external-tensor file in the same directory; both must be served together for onnxruntime-web to load the model."
+}
