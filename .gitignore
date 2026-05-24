@@ -15,6 +15,10 @@ data/
 *.onnx
 features.npy
 
+# Bone-suppression checkpoint (downloaded from danielnflam upstream — reproducible, ~13MB; see
+# training/bonesupp_weights/README.md). Not committed; the probe script documents how to fetch it.
+training/bonesupp_weights/*.tar
+
 # Python bytecode cache
 __pycache__/
 
