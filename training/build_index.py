@@ -11,6 +11,14 @@ task into data/index_tbx_latent.csv as a probe set; the unlabeled competition te
 excluded. (Decision: 2026-05-24 — screen for ACTIVE TB; latent = old/healed, radiographically
 distinct, measured separately.)
 
+NIH14 (data/raw/nih14/) is DELIBERATELY EXCLUDED from this index. It is a LOCKED,
+never-train, stratified-by-finding FPR stress test produced by scripts/fetch_nih14.py; its
+per-finding labels live in the sidecar data/raw/nih14/nih14_findings.csv and the stratified
+mimic-FPR probe in training/stress_metrics.py reads that sidecar directly. Registering NIH14
+as label 0 here would risk it leaking into the TB training set, so the raw and parquet-cache
+dirs are added to the loop's skip list. (Decision: 2026-05-24, revised same day after a
+strategy review: NIH14 stays out of the training manifest by design.)
+
 After running, eyeball the printed per-source counts; patch any source that mislabels.
 """
 from __future__ import annotations
@@ -128,7 +136,11 @@ def main() -> None:
     latent_rows: list[dict] = []
     for src_dir in sorted(d for d in RAW.iterdir() if d.is_dir()):
         src = src_dir.name
-        if src == "lungseg":
+        if src in ("lungseg", "nih14", "nih14_parquet"):
+            # lungseg = masks (not TB train/test).
+            # nih14 = NIH ChestX-ray14: locked, never-train per-finding FPR stress test — read by
+            #         training/stress_metrics.py from its sidecar, NOT registered as TB training data.
+            # nih14_parquet = the raw parquet cache for nih14.
             continue
         if src == "tbx11k":
             b, lat = build_tbx11k(src_dir)
