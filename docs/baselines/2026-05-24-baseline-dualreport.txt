@@ -1,0 +1,30 @@
+sources: {'montgomery': 137, 'qatar': 1393, 'shenzhen': 647}
+total 2177  pos=1078  neg=1099
+
+--- LODO (fusion-only) ---
+  holdout=montgomery     n=  137 AUC=0.874
+      cold-start  (frozen thr)  sens=0.724 [95% CI 0.59-0.83] spec=0.886
+      + local recalibration     sens=0.976 [95% CI 0.87-1.00] spec=0.273  (eval n_pos=41)
+  holdout=qatar          n= 1393 AUC=0.915
+      cold-start  (frozen thr)  sens=0.798 [95% CI 0.77-0.83] spec=0.933
+      + local recalibration     sens=0.930 [95% CI 0.90-0.95] spec=0.508  (eval n_pos=486)
+  holdout=shenzhen       n=  647 AUC=0.780
+      cold-start  (frozen thr)  sens=0.287 [95% CI 0.24-0.34] spec=0.994
+      + local recalibration     sens=0.895 [95% CI 0.85-0.93] spec=0.268  (eval n_pos=229)
+  >>> mean LODO AUC (fusion-only) = 0.856
+
+--- LODO (fusion+attention) ---
+  holdout=montgomery     n=  137 AUC=0.921
+      cold-start  (frozen thr)  sens=0.672 [95% CI 0.54-0.79] spec=0.962
+      + local recalibration     sens=0.976 [95% CI 0.87-1.00] spec=0.200  (eval n_pos=41)
+  holdout=qatar          n= 1393 AUC=0.918
+      cold-start  (frozen thr)  sens=0.788 [95% CI 0.76-0.82] spec=0.946
+      + local recalibration     sens=0.924 [95% CI 0.90-0.95] spec=0.590  (eval n_pos=486)
+  holdout=shenzhen       n=  647 AUC=0.820
+      cold-start  (frozen thr)  sens=0.339 [95% CI 0.29-0.39] spec=0.994
+      + local recalibration     sens=0.895 [95% CI 0.85-0.93] spec=0.411  (eval n_pos=229)
+  >>> mean LODO AUC (fusion+attention) = 0.886
+
+attention ablation: fusion-only 0.856 -> fusion+attention 0.886 (delta +0.030)
+
+final head -> data/tb_head.pt ; threshold@92%sens=0.726 (re-fit per site)

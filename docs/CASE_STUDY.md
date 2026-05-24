@@ -139,6 +139,26 @@ Caveats kept loud: Qatar is a re-mix of the NLM sets, so residual overlap likely
 
 ---
 
+## Milestone 11 — The Shenzhen "collapse" was a threshold, not the model (2026-05-24)
+
+The baseline's Shenzhen fold looked alarming: 31% sensitivity. The instinct is to throw data at it. I checked first whether it was a *discrimination* problem or a *calibration* one — because the AUC (0.82–0.85) didn't match a 31% sensitivity. A model that ranks TB vs normal at 0.82 AUC but catches only a third of cases isn't weak; it's sitting at the wrong operating point.
+
+So I changed the honest scoreboard: every LODO fold now reports **two** sensitivities — **cold-start** (the frozen train-derived threshold, no local adaptation) and **+ local recalibration** (threshold fit on a small disjoint slice of the held-out site, evaluated on the rest, simulating "deploy with a little local labeled data"). The result settled it:
+
+| Held-out site | Cold-start sens | + local recalibration | Spec cost |
+|---|---|---|---|
+| Shenzhen | 33.9% | **89.5%** [0.85–0.93] | 99% → 41% |
+| Montgomery | 67.2% | 97.6% (n=41, wide CI) | 96% → 20% |
+| Qatar | 78.8% | 92.4% | 95% → 59% |
+
+Shenzhen wasn't broken — its threshold hadn't travelled. With a local calibration slice it hits 90% sensitivity, exactly what AUC 0.82 should permit. But the dual report also makes the *price* honest: reaching 90% sensitivity on Shenzhen drops specificity to 41% — a flood of false positives — because at this AUC you cannot have both. That specificity collapse is the real argument for more and better data: a higher AUC is what buys you 90% sensitivity *cheaply* (at acceptable specificity), and no amount of threshold tuning substitutes for it.
+
+I also caught that head training was unseeded (~0.02 AUC run-to-run; the attention-mean wobbled 0.897 → 0.886 between runs) and pinned the seed, while noting the truthful figure is a band, not a point.
+
+**Lesson:** when a safety-critical metric looks catastrophic, separate discrimination (AUC) from operating point (sensitivity at a threshold) *before* reaching for more data. Reporting the pair — cold-start floor and recalibrated-achievable, with the specificity each costs — tells the whole truth where a single number would have lied in one direction or the other.
+
+---
+
 ## What this project demonstrates (for the portfolio reader)
 
 - **Honest ML evaluation.** I measured real sensitivity/specificity/AUC against ground truth and led with the uncomfortable number (14%), then improved it methodically and re-measured. No cherry-picked accuracy.
@@ -158,4 +178,6 @@ Caveats kept loud: Qatar is a re-mix of the NLM sets, so residual overlap likely
 - **2026-05-24** — Live integration + real-data findings (M2); measured 14% baseline sensitivity (M3); VLM improvements → 42% (M4); 90%-path research swarms (M5); calibration core shipped via subagent-driven review gates (M6); started the real-classifier training pipeline, expanded to multi-task best-quality (M7).
 - **2026-05-24** — Verification/hardening pass (M8): agent + GPT-5.5 dual review. Fixed a fail-open (empty-ensemble → "NO TB"), verdict/confidence coercion, UI-stuck stage statuses, and training-script robustness. Build + 11/11 tests green.
 - **2026-05-24** — Commercial/SOTA improvement study (M9b): studied how CAD4TB/qXR/Lunit/Google TB CAD reach their accuracy. Their edge (data/label/pretraining scale) isn't copyable, but 3 architecture/calibration levers are — top one: an **attention-pooled head over Rad-DINO patch tokens** (documented +6 AUROC on frozen Rad-DINO; we were using CLS only) — plus lung-crop front-end and per-site threshold calibration. Added an accuracy-improvement roadmap to the plan. (No new measured numbers yet.)
+- **2026-05-24** — First trained-model baseline (M10): 2,177-img 3-source LODO. Fusion-only AUC 0.858 → +attention 0.897 (validates the attention head). Recorded to `docs/baselines/`. Strong but optimistic (Qatar re-mix leakage, radiographic labels, subsampled).
+- **2026-05-24** — Shenzhen fix (M11): the 31% sensitivity was threshold-transfer, not model quality. Added a dual sensitivity report (cold-start vs + local recalibration); Shenzhen 34% → 90% with a local calibration slice (spec cost 99% → 41%). Seeded training. TBX11K landed (11,702 imgs → ~16k full set).
 - **2026-05-24** — Expert-panel science validation (M9): 6-lens review (methodologist/radiologist/epidemiologist/steelman/literature/red-team). Architecture validated against literature; corrected overclaims — conformal guarantee → in-distribution + re-fit-per-site; dropped user-facing "latent TB" class; radiographic ≠ bacteriological labels; added PPV-at-prevalence honesty; soft-mask preprocessing; dedup/LODO leakage hardening. Plan + ship-gate rewritten.
