@@ -122,6 +122,23 @@ I folded every correction into the plan — softened the guarantee language to "
 
 ---
 
+## Milestone 10 — First real numbers from the trained model (2026-05-24)
+
+After all the planning and review, the baseline landed — the moment the project stopped being scaffolding and started being a model. On a balanced 2,177-image subsample of three open sources (Qatar/Montgomery/Shenzhen), leave-one-dataset-out:
+
+- **Fusion-only** (Rad-DINO CLS + TorchXRayVision): mean LODO AUC **0.858**.
+- **+ patch-attention head**: mean LODO AUC **0.897** — a measured **+0.040** from the attention lever, matching the literature's prediction. (That I'd shipped CLS-only first was the mistake; the ablation proved the fix.)
+
+That 0.90 sits in the **same external-AUC band as commercial CAD4TB/qXR/Lunit** — from a frozen-backbone probe on an afternoon's open data, versus the 42% the VLM-only managed.
+
+But the honest reading is in the per-fold detail. On Qatar and Montgomery the frozen (train-derived) threshold *transferred* — sensitivity 78–82% at >90% specificity. On **Shenzhen it did not**: AUC 0.85 but only **31% sensitivity** at that frozen threshold, because Shenzhen's score distribution is shifted and the cutoff was too high. That's the textbook "fixed thresholds don't transfer across sites" result the commercial literature warns about — and the exact reason the method reports *frozen-threshold cross-source* sensitivity instead of a flattering in-fold number: it makes the transfer gap a measurement, not a worry.
+
+Caveats kept loud: Qatar is a re-mix of the NLM sets, so residual overlap likely **inflates** 0.90 above a true-external figure (pHash dedup removes copies, not deeper spectral overlap); labels are radiographic, not bacteriological; it's a subsample. So 0.90 is an encouraging upper-ish bound, not the deployment number — the full run (+TBX11K, leakage-grouped LODO, confirmed-label tier) gives the truer one.
+
+**Lesson:** the first real measurement did three things at once — confirmed the architecture works (commercial-band AUC), *proved* the attention lever (+0.04), and surfaced the operating-point-transfer problem as a number rather than a hypothesis. Recorded to `docs/baselines/` as the comparison point for everything that follows.
+
+---
+
 ## What this project demonstrates (for the portfolio reader)
 
 - **Honest ML evaluation.** I measured real sensitivity/specificity/AUC against ground truth and led with the uncomfortable number (14%), then improved it methodically and re-measured. No cherry-picked accuracy.
