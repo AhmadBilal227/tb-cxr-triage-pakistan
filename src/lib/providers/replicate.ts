@@ -15,11 +15,10 @@ import { ReplicateError } from './errors';
  * per the frontend-only constraint and surface any CORS failure in the trace.
  */
 
-// In dev, go through the Vite proxy (Replicate sends no CORS headers — see vite.config.ts).
-// In a production build, hit the API directly (requires a same-origin proxy to actually work).
-const REPLICATE_BASE = import.meta.env.DEV
-  ? '/replicate/v1'
-  : 'https://api.replicate.com/v1';
+// Always go through a same-origin proxy: Replicate's REST API does not send permissive
+// CORS headers, so direct browser calls are blocked. Dev = Vite proxy (vite.config.ts).
+// Prod = Netlify rewrite (netlify.toml: /replicate/* -> api.replicate.com/:splat 200).
+const REPLICATE_BASE = '/replicate/v1';
 const MAX_POLL_MS = 60_000;
 const POLL_START_MS = 700;
 const POLL_MAX_INTERVAL_MS = 5_000;

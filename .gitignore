@@ -28,3 +28,6 @@ __pycache__/
 
 
 data/extract_progress.txt
+
+# Local Netlify folder
+.netlify
