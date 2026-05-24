@@ -54,6 +54,13 @@ export function VerdictCard({
         <div className="mt-1.5 font-mono text-[10px] uppercase tracking-wider text-muted">
           radiographic TB screen · not a diagnosis · confirm bacteriologically
         </div>
+        <div
+          className="mt-1 px-1 text-[10px] leading-snug text-muted/80"
+          data-testid="scar-fpr-disclosure"
+        >
+          Higher false-positive rate (~10%) expected on radiographically scar-shaped findings
+          (healed fibrosis, pleural thickening).
+        </div>
       </div>
       {adjudication.verdict === 'no_tb' && (
         <p className="mt-2 rounded-md bg-verdict-uncertain/10 px-3 py-2 text-[11px] leading-snug text-verdict-uncertain">
