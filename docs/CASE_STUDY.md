@@ -183,6 +183,20 @@ Measured after the fixes (2,177-image subset, backbones unchanged): fusion-only 
 
 ---
 
+## Milestone 13 — The full validated run, and the attention lever deflates (2026-05-24)
+
+The audit-fixed pipeline ran end to end on all four sources — **13,092 deduplicated images**, harmonized preprocessing, the dup-cluster leak-guard on, bootstrap CIs, prevalence-aware reporting. The honest 4-source numbers:
+
+- **Fusion-only mean LODO AUROC 0.916; fusion+attention 0.924.** Strong, in the commercial external band — but read it through the leak flags, not the mean.
+- **The attention-over-patches lever deflated to +0.008.** It looked like the headline win on the 2,177-image subset (+0.034), and the commercial literature credited patch-attention with +6 AUROC. At full scale it's inside the bootstrap CIs — marginal. More data made the CLS+TorchXRayVision fusion strong enough on its own that attention added almost nothing (it still helped TBX11K +0.024 but was neutral-to-negative on Montgomery). I'm recording the deflation, not the earlier hope: at this scale, attention pooling is a rounding error here, not the lever I'd billed since M9b.
+- **Shenzhen's cold-start "collapse" from M11 is gone** — 34% sensitivity at a frozen threshold → **79%** on the full run. Harmonized intensity + dropping label smoothing + temperature scaling + more training data fixed the threshold transfer that a local recalibration had previously been needed to rescue.
+- **Site-leak fell 1.000 → 0.945** (4 sources, chance 0.25): the features are still highly site-separable, exactly as the steelman warned — so I trust the cleaner-external folds (Montgomery AUROC **0.88**, Shenzhen **0.94**) and treat the re-mix folds (Qatar/TBX11K, 0.94) as leakage-inflated.
+- **The deployment number, on the cleaner externals** (sens 0.94, spec 0.50): at 1% prevalence, **1.9% PPV and ~54 confirmatory tests per flagged case**; cross-site calibration still imperfect (Montgomery ECE 0.21). A radiographic-pattern detector, not an active-TB diagnosis.
+
+**Lesson:** the subset lied about the attention lever; the full run + bootstrap CIs caught it. The cheapest insurance against a flattering result is more held-out data and a confidence interval — plus the willingness to write down "the thing I thought mattered, doesn't."
+
+---
+
 ## What this project demonstrates (for the portfolio reader)
 
 - **Honest ML evaluation.** I measured real sensitivity/specificity/AUC against ground truth and led with the uncomfortable number (14%), then improved it methodically and re-measured. No cherry-picked accuracy.
@@ -204,5 +218,6 @@ Measured after the fixes (2,177-image subset, backbones unchanged): fusion-only 
 - **2026-05-24** — Commercial/SOTA improvement study (M9b): studied how CAD4TB/qXR/Lunit/Google TB CAD reach their accuracy. Their edge (data/label/pretraining scale) isn't copyable, but 3 architecture/calibration levers are — top one: an **attention-pooled head over Rad-DINO patch tokens** (documented +6 AUROC on frozen Rad-DINO; we were using CLS only) — plus lung-crop front-end and per-site threshold calibration. Added an accuracy-improvement roadmap to the plan. (No new measured numbers yet.)
 - **2026-05-24** — First trained-model baseline (M10): 2,177-img 3-source LODO. Fusion-only AUC 0.858 → +attention 0.897 (validates the attention head). Recorded to `docs/baselines/`. Strong but optimistic (Qatar re-mix leakage, radiographic labels, subsampled).
 - **2026-05-24** — Shenzhen fix (M11): the 31% sensitivity was threshold-transfer, not model quality. Added a dual sensitivity report (cold-start vs + local recalibration); Shenzhen 34% → 90% with a local calibration slice (spec cost 99% → 41%). Seeded training. TBX11K landed (11,702 imgs → ~16k full set).
+- **2026-05-24** — Full validated 4-source run (M13): 13,092 imgs, harmonized + leak-guarded. Mean LODO AUROC fusion-only 0.916 → +attention **0.924**, but the attention lever **deflated to +0.008** at scale (was +0.034 on the subset; literature claimed +6) — recorded the correction. Shenzhen cold-start recovered 34% → **79%**. Site-leak 1.000 → 0.945. Cleaner-external folds: Montgomery 0.88, Shenzhen 0.94. Deployment: 1% prevalence ⇒ 1.9% PPV, ~54 tests/flagged case (radiographic endpoint).
 - **2026-05-24** — Reliability audit + steelman (M12): the site-leak canary scored **1.000** (perfect), exposing a scanner/resolution shortcut. 4-agent literature audit + gpt-5.5 steelman. Verified the foundation-model plumbing correct; fixed preprocessing (drop CLAHE→monotonic norm, antialiased resolution, detect-only inversion, true TXRV logits, same input to both backbones) and eval (provenance match-graph leak-guard, drop label smoothing, temperature+ECE, bootstrap AUC CIs, PPV-at-prevalence). **Cut two wrong turns** (Gaussian blur, chasing the canary to chance). Reframed endpoint to "radiographic-TB-pattern" (not active TB). Recorded the honest medical-grade gap (frontend BYOK + radiographic labels ≠ device). +attention held: 0.871 → 0.905 AUROC; at sens 0.93/spec 0.56, 1% prevalence ⇒ 2.1% PPV, ~48 tests/flagged case.
 - **2026-05-24** — Expert-panel science validation (M9): 6-lens review (methodologist/radiologist/epidemiologist/steelman/literature/red-team). Architecture validated against literature; corrected overclaims — conformal guarantee → in-distribution + re-fit-per-site; dropped user-facing "latent TB" class; radiographic ≠ bacteriological labels; added PPV-at-prevalence honesty; soft-mask preprocessing; dedup/LODO leakage hardening. Plan + ship-gate rewritten.
