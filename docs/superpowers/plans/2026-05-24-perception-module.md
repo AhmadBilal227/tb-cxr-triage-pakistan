@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a real perception layer to the TB triage app — a calibrated, sensitivity-guaranteed decision core (Phase 1) plus an in-browser ONNX chest-X-ray classifier (Phase 2), with an offline training recipe (Phase 3) and a hosted fallback (Phase 4).
+**Goal:** Add a real perception layer to the TB triage app — a calibrated decision core that *targets* a sensitivity level (finite-sample, in-distribution conformal coverage; re-fit per site, **not** a guarantee under deployment shift) (Phase 1) plus an in-browser ONNX chest-X-ray classifier (Phase 2), with an offline training recipe (Phase 3) and a hosted fallback (Phase 4).
 
 **Architecture:** Phase 1 introduces a pure-TS `calibration.ts` module that replaces the hard-coded `SCREENING_POLICY` with per-model probability calibration, log-odds fusion, and class-conditional conformal thresholds fit from a labeled holdout via `/validate`; the orchestrator reads fitted params when present and falls back to today's behavior when absent. Phase 2 adds an in-browser ONNX classifier (`@huggingface/transformers`, WebGPU + WASM fallback) as a new `'local'` `ClassifierProvider` that runs *before* the HF→Replicate cascade. Phases 3–4 are offline/ops runbooks for a trustworthy model.
 
 **Tech Stack:** TypeScript (strict), Vite, React, Vitest (new), `@huggingface/transformers` (new, Phase 2), ONNX Runtime Web (bundled by transformers.js), Python + Optimum (offline, Phases 2–3), Modal (optional, Phase 4).
 
-**Why this order:** Phase 1 is pure TS, needs no model hosting or large assets, turns "≥90% sensitivity" into a finite-sample guarantee, and improves *any* model plugged in later. It is independently shippable and testable. Phase 2 is the larger commitment (Python export + ~87 MB asset). Build Phase 1 first.
+**Why this order:** Phase 1 is pure TS, needs no model hosting or large assets, turns "≥90% sensitivity" into a finite-sample, in-distribution coverage *target* (void under deployment shift; re-fit per site with a binomial CI), and improves *any* model plugged in later. It is independently shippable and testable. Phase 2 is the larger commitment (Python export + ~87 MB asset). Build Phase 1 first.
 
 ---
 

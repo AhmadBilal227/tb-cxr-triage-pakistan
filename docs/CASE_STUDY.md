@@ -159,14 +159,38 @@ I also caught that head training was unseeded (~0.02 AUC run-to-run; the attenti
 
 ---
 
+## Milestone 12 — A reliability audit, and the day the honest numbers got harder (2026-05-24)
+
+One line from the user — *"are the datasets normalized, will the different fields mess it up?"* — became the most important correction of the project. I ran a **site-leak canary** (can a trivial classifier name the *source dataset* from the frozen features?). It scored **balanced accuracy 1.000** against a 0.333 chance. The features were perfectly site-separable, which meant every LODO number to date was suspect: the head could be reading scanner/resolution, not TB.
+
+So I put the whole pipeline through a **four-agent literature audit** (data harmonization, evaluation methodology, ML/calibration math, foundation-model input contracts) and then had **gpt-5.5 steelman** my proposed fixes. The convergent verdict was humbling and clarifying.
+
+**The plumbing was right.** No register-token bug in Rad-DINO, the patch-grid slice and the mean/std were correct, the attention-MIL math and the conformal index were sound. The foundation held.
+
+**But two of my own planned fixes were wrong turns,** and the steelman caught them. I wanted to **Gaussian-blur** images to erase the resolution shortcut — gpt-5.5 pointed out I'd be suppressing the exact high-frequency signal TB sensitivity depends on (miliary nodules, faint apical infiltrates), trading away the safety-critical metric to make a diagnostic number prettier. And **chasing the site-canary to chance** was optimizing the wrong thing: foundation features always encode acquisition; the goal is external validity and threshold transfer, not site-invisible features. I cut both. The discipline that mattered most was deleting my own clever idea.
+
+**What I kept and shipped:** dropped CLAHE for a monotonic normalization closer to Rad-DINO's pretraining; antialiased resolution standardization (no blur); detect-and-*log* inversion (no silent pixel-flipping — medical-grade needs the DICOM tag); true TorchXRayVision logits; a cross-source **provenance match-graph** in dedup with a leak-guard so re-mixed wrappers can't span the train/test split, and cross-label clusters raised as a data-quality alarm; dropped label smoothing (it was distorting the very probability we fuse); **temperature calibration with ECE reported**; **bootstrap AUROC CIs**; and **PPV/NPV with confirmatory-tests-per-case at 1–2% prevalence**.
+
+That last number matters most and flatters least: at a 0.93-sensitivity operating point, **1% prevalence gives ~2% PPV and ~48 confirmatory tests per flagged case**. A model can post 0.90 AUROC and still send 48 people for confirmation per true case found. That's the honest cost of screening at low prevalence, and it's in the report now.
+
+**The hardest correction was semantic, not numerical:** my labels are *radiographic*, not microbiological. The system detects a *radiographic pattern associated with TB labels* — not confirmed *active* TB. I reframed the endpoint everywhere to say exactly that.
+
+**And the "medical-grade" question.** The user asked for a medical-grade system. The honest answer, which gpt-5.5 put bluntly and I have to record: you cannot get there by patching a frontend BYOK prototype on open radiographic data. Medical-grade needs microbiological ground truth, prospective multi-site validation, a locked server-side model (not a browser calling third-party APIs that can change under you), an LLM kept *out* of the decision path, and a QMS/regulatory program (ISO 13485, IEC 62304, ISO 14971, an FDA/CE pathway). What this project can honestly be: *built with medical-grade engineering discipline, clearly labeled not a device, with a documented path to clearance.* I'd rather ship that sentence than overclaim.
+
+Measured after the fixes (2,177-image subset, backbones unchanged): fusion-only **0.871 → +attention 0.905** LODO AUROC — the attention lever survived every correction. The full 4-source re-run on the harmonized pipeline is the next number.
+
+**Lesson:** a one-line user question was worth more than any metric. The site-leak canary is the cheapest honest instrument I added — and reliability came from being willing to delete my own clever fix when the steelman showed it traded sensitivity for a prettier diagnostic.
+
+---
+
 ## What this project demonstrates (for the portfolio reader)
 
 - **Honest ML evaluation.** I measured real sensitivity/specificity/AUC against ground truth and led with the uncomfortable number (14%), then improved it methodically and re-measured. No cherry-picked accuracy.
 - **Systems thinking under constraints.** A coherent three-provider abstraction, visible fallback, and a deterministic safety net wrapping an LLM — frontend-only, BYOK, strict-typed.
 - **Research → implementation.** Parallel agent swarms to map a solution space, distilled into a phased plan grounded in 2025–26 literature with citations.
 - **Engineering discipline.** Subagent-driven execution with spec + code-quality review gates that caught real correctness bugs before they shipped.
-- **Calibrated, safety-first ML.** Conformal thresholds that guarantee a sensitivity target, with a guard for the small-sample regime — the difference between a demo and something you'd let near a screening workflow.
-- **Knowing the ceiling.** Clear-eyed about what a frontend BYOK app with open data can realistically reach (~85–90% borderline) vs. where a commercial-grade model or in-domain data is required — and why.
+- **Calibrated, safety-first ML.** Conformal thresholds that *target* a sensitivity level (finite-sample, in-distribution coverage — re-fit per site, reported with CIs; **not** a guarantee under deployment shift), with a guard for the small-sample regime — the difference between a demo and something you'd let near a screening workflow.
+- **Knowing the ceiling.** Clear-eyed about what a frontend BYOK app with open *radiographic-labeled* data can realistically reach vs. where microbiological labels, a locked server-side model, and clinical validation are required for an actual medical-grade claim — and honest that this is a research preview, **not a medical device**.
 
 ---
 
@@ -180,4 +204,5 @@ I also caught that head training was unseeded (~0.02 AUC run-to-run; the attenti
 - **2026-05-24** — Commercial/SOTA improvement study (M9b): studied how CAD4TB/qXR/Lunit/Google TB CAD reach their accuracy. Their edge (data/label/pretraining scale) isn't copyable, but 3 architecture/calibration levers are — top one: an **attention-pooled head over Rad-DINO patch tokens** (documented +6 AUROC on frozen Rad-DINO; we were using CLS only) — plus lung-crop front-end and per-site threshold calibration. Added an accuracy-improvement roadmap to the plan. (No new measured numbers yet.)
 - **2026-05-24** — First trained-model baseline (M10): 2,177-img 3-source LODO. Fusion-only AUC 0.858 → +attention 0.897 (validates the attention head). Recorded to `docs/baselines/`. Strong but optimistic (Qatar re-mix leakage, radiographic labels, subsampled).
 - **2026-05-24** — Shenzhen fix (M11): the 31% sensitivity was threshold-transfer, not model quality. Added a dual sensitivity report (cold-start vs + local recalibration); Shenzhen 34% → 90% with a local calibration slice (spec cost 99% → 41%). Seeded training. TBX11K landed (11,702 imgs → ~16k full set).
+- **2026-05-24** — Reliability audit + steelman (M12): the site-leak canary scored **1.000** (perfect), exposing a scanner/resolution shortcut. 4-agent literature audit + gpt-5.5 steelman. Verified the foundation-model plumbing correct; fixed preprocessing (drop CLAHE→monotonic norm, antialiased resolution, detect-only inversion, true TXRV logits, same input to both backbones) and eval (provenance match-graph leak-guard, drop label smoothing, temperature+ECE, bootstrap AUC CIs, PPV-at-prevalence). **Cut two wrong turns** (Gaussian blur, chasing the canary to chance). Reframed endpoint to "radiographic-TB-pattern" (not active TB). Recorded the honest medical-grade gap (frontend BYOK + radiographic labels ≠ device). +attention held: 0.871 → 0.905 AUROC; at sens 0.93/spec 0.56, 1% prevalence ⇒ 2.1% PPV, ~48 tests/flagged case.
 - **2026-05-24** — Expert-panel science validation (M9): 6-lens review (methodologist/radiologist/epidemiologist/steelman/literature/red-team). Architecture validated against literature; corrected overclaims — conformal guarantee → in-distribution + re-fit-per-site; dropped user-facing "latent TB" class; radiographic ≠ bacteriological labels; added PPV-at-prevalence honesty; soft-mask preprocessing; dedup/LODO leakage hardening. Plan + ship-gate rewritten.
