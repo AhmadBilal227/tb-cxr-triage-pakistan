@@ -233,6 +233,30 @@ export interface Adjudication {
    * misleading "UNCERTAIN — REFER" card with a near-zero confidence ring.
    */
   perception_unavailable?: boolean;
+  /**
+   * Which perception pathway produced this verdict (Milestone 21). Lets the
+   * VerdictCard render path-specific disclosures: the VLM path is uncalibrated
+   * and unvalidated; the ONNX path (when it becomes available, Phase B) is the
+   * project's validated head and gets its own disclosure language.
+   *
+   *   - 'vlm-primary'        : gpt-5.5 vision is the primary perception (M21 default today).
+   *   - 'onnx-primary'       : the local Rad-DINO + TXRV head ran (Phase B, not deployed yet).
+   *   - 'hf-ensemble'        : the legacy M1–M20 HF ensemble (kept for fallback compatibility).
+   *   - 'perception-unavailable': nothing ran — same flag as `perception_unavailable: true`.
+   */
+  perception_path?: 'vlm-primary' | 'onnx-primary' | 'hf-ensemble' | 'perception-unavailable';
+  /** Audit pins for the VLM path: prompt/schema versions + the model id the API returned. */
+  vlm_audit?: {
+    prompt_hash: string;
+    schema_version: string;
+    schema_hash: string;
+    model_id_from_response: string;
+    image_preprocessing_version: string;
+    /** True when the borderline consistency-check verifier was actually called. */
+    consistency_check_ran: boolean;
+    /** True when primary + verifier disagreed on screen_result → forced ABSTAIN. */
+    consistency_check_disagreed: boolean;
+  };
   /** Transparency: how the safety-net combine reached the final verdict. */
   screening?: {
     policyVerdict: Verdict;
