@@ -14,11 +14,18 @@ import { useSettings, deriveCapabilities } from '@/store/settings';
  * Reuses the existing surface tone (subtle, monospaced, no emoji). Returns
  * null when at least one key is set, so it disappears the moment the user
  * configures something.
+ *
+ * Split into a thin hook-using wrapper (default export) plus a pure
+ * presentational view (`NoKeysBannerView`) so tests can render the markup
+ * via react-dom/server without needing a node-env localStorage shim.
  */
-export function NoKeysBanner({ onOpenSettings }: { onOpenSettings: () => void }): JSX.Element | null {
-  const settings = useSettings();
-  const caps = deriveCapabilities(settings);
-  const hasAny = caps.hasOpenAI || caps.hasHF || caps.hasReplicate;
+export function NoKeysBannerView({
+  hasAny,
+  onOpenSettings,
+}: {
+  hasAny: boolean;
+  onOpenSettings: () => void;
+}): JSX.Element | null {
   if (hasAny) return null;
   return (
     <div
@@ -36,4 +43,11 @@ export function NoKeysBanner({ onOpenSettings }: { onOpenSettings: () => void })
       </Button>
     </div>
   );
+}
+
+export function NoKeysBanner({ onOpenSettings }: { onOpenSettings: () => void }): JSX.Element | null {
+  const settings = useSettings();
+  const caps = deriveCapabilities(settings);
+  const hasAny = caps.hasOpenAI || caps.hasHF || caps.hasReplicate;
+  return <NoKeysBannerView hasAny={hasAny} onOpenSettings={onOpenSettings} />;
 }

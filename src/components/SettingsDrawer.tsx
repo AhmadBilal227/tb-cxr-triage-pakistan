@@ -1,77 +1,12 @@
 import { useState, type ReactNode } from 'react';
-import { AlertTriangle, CheckCircle2, ChevronRight, KeyRound, MinusCircle, XCircle } from 'lucide-react';
+import { AlertTriangle, ChevronRight, KeyRound } from 'lucide-react';
 import { Dialog, DrawerContent, DialogTitle } from './ui/dialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
 import { Button } from './ui/button';
 import { settingsStore, useSettings, deriveCapabilities } from '@/store/settings';
-import { useProviderStatus, type ProviderStatus } from '@/store/providerStatus';
-import type { Provider } from '@/lib/types';
+import { useProviderStatus } from '@/store/providerStatus';
+import { ProviderStatusBadge } from './ProviderStatusBadge';
 import { cn } from '@/lib/utils';
-
-/**
- * Tiny per-provider status indicator.
- *
- * Shows nothing while the provider has never been called. Once it has been
- * called (or short-circuited by missing config), reports the LAST result so
- * the user can see WHICH key is the actual problem without DevTools.
- *
- * Status text is stable across runs so tests can match on it; the human
- * reason carried in `status.note` is the actionable detail.
- */
-function ProviderStatusBadge({
-  provider,
-  hasKey,
-  status,
-}: {
-  provider: Provider;
-  hasKey: boolean;
-  status: ProviderStatus;
-}): JSX.Element | null {
-  // If the provider has never been called AND no key is set, the no-keys
-  // banner + the regular "no token" hint already cover this — keep the
-  // settings page calm.
-  if (status.state === 'unknown' && !hasKey) return null;
-  if (status.state === 'unknown' && hasKey) {
-    return (
-      <span
-        data-testid={`provider-status-${provider}`}
-        className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-muted"
-      >
-        <MinusCircle className="h-3 w-3" /> {provider}: configured · not yet called
-      </span>
-    );
-  }
-  if (status.state === 'not-configured') {
-    return (
-      <span
-        data-testid={`provider-status-${provider}`}
-        className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-muted"
-      >
-        <MinusCircle className="h-3 w-3" /> {provider}: not configured
-      </span>
-    );
-  }
-  if (status.state === 'ok') {
-    return (
-      <span
-        data-testid={`provider-status-${provider}`}
-        className="inline-flex items-center gap-1 rounded-md border border-verdict-clear/40 bg-verdict-clear/10 px-1.5 py-0.5 font-mono text-[10px] text-verdict-clear"
-      >
-        <CheckCircle2 className="h-3 w-3" /> {provider}: ok{status.note ? ` · ${status.note}` : ''}
-      </span>
-    );
-  }
-  // Any failure tag — colorize uniformly red, surface the note for action.
-  return (
-    <span
-      data-testid={`provider-status-${provider}`}
-      className="inline-flex items-center gap-1 rounded-md border border-verdict-tb/40 bg-verdict-tb/10 px-1.5 py-0.5 font-mono text-[10px] text-verdict-tb"
-    >
-      <XCircle className="h-3 w-3" /> {provider}: last call {status.state}
-      {status.note ? ` · ${status.note}` : ''}
-    </span>
-  );
-}
 
 function Field({
   label,
