@@ -20,15 +20,28 @@ from train_tb import TBHead, run_lodo, SEED
 DATA = Path(__file__).resolve().parents[1] / "data"
 
 
-def label_randomization_check(arrs: dict, y: np.ndarray, src: np.ndarray, groups) -> dict:
-    """Permute labels, retrain via the SAME LODO harness. AUROC must fall below ~0.60."""
-    rng = np.random.default_rng(SEED)
-    y_perm = y.copy()
-    rng.shuffle(y_perm)
-    auc, _ = run_lodo(arrs, y_perm, src, groups, use_patches=True)
-    return {"lodo_auc_permuted_labels": auc,
-            "verdict": "PASS (<0.60 — no detectable shortcut)" if auc < 0.60
-                       else "FAIL (>=0.60 — features carry a site/scanner shortcut)"}
+def label_randomization_check(arrs: dict, y: np.ndarray, src: np.ndarray, groups,
+                              n_perms: int = 3) -> dict:
+    """Permute labels, retrain via the SAME LODO harness. Mean permuted-label AUROC must fall < ~0.60.
+
+    A SINGLE permutation + a hard 0.60 cutoff is seed-dependent (one unlucky permutation can tip the
+    verdict either way). Run N>=3 permutations with DISTINCT seeds and base PASS/FAIL on the MEAN,
+    also reporting the range so a wide spread is visible. N=3 keeps it fast."""
+    aucs: list[float] = []
+    for k in range(n_perms):
+        rng = np.random.default_rng(SEED + k)  # distinct seed per permutation
+        y_perm = y.copy()
+        rng.shuffle(y_perm)
+        auc, _ = run_lodo(arrs, y_perm, src, groups, use_patches=True)
+        aucs.append(float(auc))
+    mean_auc = float(np.mean(aucs))
+    lo, hi = float(np.min(aucs)), float(np.max(aucs))
+    return {"n_perms": n_perms,
+            "lodo_auc_permuted_labels_each": [round(a, 4) for a in aucs],
+            "lodo_auc_permuted_labels_mean": round(mean_auc, 4),
+            "lodo_auc_permuted_labels_range": [round(lo, 4), round(hi, 4)],
+            "verdict": "PASS (mean <0.60 — no detectable shortcut)" if mean_auc < 0.60
+                       else "FAIL (mean >=0.60 — features carry a site/scanner shortcut)"}
 
 
 def model_randomization_check(model: TBHead, arrs: dict, n: int = 100) -> dict:

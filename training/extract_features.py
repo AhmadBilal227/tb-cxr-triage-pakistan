@@ -138,7 +138,11 @@ def parse_bbox_field(raw: object) -> list[tuple[float, float, float, float]]:
     if isinstance(obj, list):
         for d in obj:
             if isinstance(d, dict) and {"xmin", "ymin", "width", "height"} <= set(d):
-                boxes.append((float(d["xmin"]), float(d["ymin"]), float(d["width"]), float(d["height"])))
+                try:  # one malformed numeric value must skip THAT box, not crash the whole parse
+                    boxes.append((float(d["xmin"]), float(d["ymin"]), float(d["width"]), float(d["height"])))
+                except (ValueError, TypeError):
+                    print(f"parse_bbox_field: skipping malformed box {d!r}")
+                    continue
     return boxes
 
 
@@ -361,10 +365,12 @@ def main(mode: str = "main") -> None:
             return res
         stack = np.stack([xrv.datasets.normalize(cv2.resize(c, (512, 512)).astype("float32"), 255) for c in harm_list])
         t = torch.from_numpy(stack)[:, None, ...].to(DEVICE)
-        seg_out = torch.sigmoid(seg(t)).cpu().numpy()              # [b,C,512,512]
-        masks = seg_out[:, lung_idx].max(1)                        # [b,512,512] crop driver (lung+hilus+med)
-        lung_s = seg_out[:, lung_only_idx].max(1) if lung_only_idx else None
-        hil_s = seg_out[:, hilus_med_idx].max(1) if hilus_med_idx else None
+        seg_prob = torch.sigmoid(seg(t))                           # [b,C,512,512] on-device
+        # Select only the needed channels ON-DEVICE (max over the relevant channel group), then copy
+        # JUST those reductions to CPU — avoids hauling all C segmentation channels across the bus.
+        masks = seg_prob[:, lung_idx].amax(dim=1).cpu().numpy()    # [b,512,512] crop driver (lung+hilus+med)
+        lung_s = seg_prob[:, lung_only_idx].amax(dim=1).cpu().numpy() if lung_only_idx else None
+        hil_s = seg_prob[:, hilus_med_idx].amax(dim=1).cpu().numpy() if hilus_med_idx else None
         out = []
         for bi, (c, m) in enumerate(zip(harm_list, masks)):
             H, W = c.shape
@@ -373,9 +379,13 @@ def main(mode: str = "main") -> None:
                 k = max(5, int(0.04 * max(c.shape)))
                 md = cv2.dilate(mask, np.ones((k, k), np.uint8))
                 ys, xs = np.where(md > 0)
-                y0, y1, x0, x1 = int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())
+                # INCLUSIVE mask bbox -> EXCLUSIVE crop bounds: +1 on the max so the bottom/right
+                # edge row/col is kept (Python slicing and rasterize_boxes_to_grid both treat y1/x1
+                # as exclusive). Clamp to image size.
+                y0, x0 = int(ys.min()), int(xs.min())
+                y1, x1 = min(H, int(ys.max()) + 1), min(W, int(xs.max()) + 1)
                 # generous 18% margin so apical / costophrenic / pleural TB signs are not cropped out
-                my, mx = int(0.18 * (y1 - y0 + 1)), int(0.18 * (x1 - x0 + 1))
+                my, mx = int(0.18 * (y1 - y0)), int(0.18 * (x1 - x0))
                 y0, y1 = max(0, y0 - my), min(H, y1 + my)
                 x0, x1 = max(0, x0 - mx), min(W, x1 + mx)
                 soft = (c.astype("float32") * (0.3 + 0.7 * md)).clip(0, 255).astype("uint8")[y0:y1, x0:x1]
@@ -456,14 +466,21 @@ def main(mode: str = "main") -> None:
                 # ---- localization grid_label + has_box (active-TB boxes only) ----
                 cr = crops[j]
                 bxs_h = scale_boxes_orig_to_harmonized(boxes_orig[i], orig_hws[j])
-                has_box = len(bxs_h) > 0
                 gl = rasterize_boxes_to_grid(bxs_h, cr["crop_box"], cr["harm_wh"], G=PATCH_GRID, mode="soft")
+                # has_box reflects whether a box SURVIVED the crop/rasterization, not the pre-crop list:
+                # an image whose lesion was cropped out (or had no active box) gets an all-zero grid_label
+                # and MUST be has_box=False so the per-cell box loss is not supervised on a false all-zero map.
+                has_box = bool(gl.sum() > 0)
                 grid_l.append(gl.astype("float16"))
                 hasbox_l.append(has_box)
                 # ---- per-patch soft zone membership [64,7] ----
+                # Lung-zone supervision (the 6 lung zones) only needs the lung mask. If the hilar
+                # channel is unavailable, still build the 6 lung zones and just zero the 7th (hilar)
+                # channel — don't throw away all zone supervision for the missing 7th mask.
                 lung_c, hil_c = cr["lung_crop"], cr["hilus_crop"]
-                if lung_c is not None and hil_c is not None:
-                    zm = zone_matrix_from_masks(lung_c, hil_c, G=PATCH_GRID)
+                if lung_c is not None:
+                    hil_in = hil_c if hil_c is not None else np.zeros_like(lung_c)
+                    zm = zone_matrix_from_masks(lung_c, hil_in, G=PATCH_GRID)
                 else:
                     zm = np.zeros((PATCH_GRID * PATCH_GRID, N_ZONES), dtype="float32")
                 zones_l.append(zm.astype("float16"))

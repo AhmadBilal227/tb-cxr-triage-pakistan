@@ -35,7 +35,11 @@ def _parse_bbox(raw: str) -> dict | None:
         return None
     if not isinstance(d, dict) or not {"xmin", "ymin", "width", "height"} <= set(d):
         return None
-    return {k: float(d[k]) for k in ("xmin", "ymin", "width", "height")}
+    try:  # a malformed numeric value must skip THIS box (return None), not crash index-building
+        return {k: float(d[k]) for k in ("xmin", "ymin", "width", "height")}
+    except (ValueError, TypeError):
+        print(f"_parse_bbox: skipping box with non-numeric field {d!r}")
+        return None
 
 REPO = Path(__file__).resolve().parents[1]
 RAW = REPO / "data" / "raw"
