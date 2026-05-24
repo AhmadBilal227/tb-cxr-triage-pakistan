@@ -43,13 +43,24 @@ export function VerdictCard({
       className="rounded-xl border bg-surface p-4"
       style={{ borderColor: `${meta.color}66` }}
     >
-      <div className="flex items-center gap-4">
-        <ConfidenceRing value={adjudication.confidence} color={meta.color} size={92} />
+      {/* VERDICT — dominant, up top */}
+      <div
+        className="rounded-lg px-4 py-3 text-center"
+        style={{ background: `${meta.color}14`, border: `1px solid ${meta.color}40` }}
+      >
+        <div className="text-3xl font-bold leading-none tracking-tight" style={{ color: meta.color }}>
+          {meta.label}
+        </div>
+        <div className="mt-1.5 font-mono text-[10px] uppercase tracking-wider text-muted">
+          radiographic TB screen · not a diagnosis · confirm bacteriologically
+        </div>
+      </div>
+
+      {/* one-line reading + confidence; numbers live in Details below */}
+      <div className="mt-3 flex items-center gap-4">
+        <ConfidenceRing value={adjudication.confidence} color={meta.color} size={72} />
         <div className="min-w-0 flex-1">
-          <div className="text-xl font-semibold tracking-tight" style={{ color: meta.color }}>
-            {meta.label}
-          </div>
-          <p className="mt-1 text-sm leading-relaxed text-offwhite/90">{adjudication.rationale}</p>
+          <p className="text-sm leading-relaxed text-offwhite/90">{adjudication.rationale}</p>
           {adjudication.abstain_reason && (
             <p className="mt-1 text-[11px] text-verdict-uncertain">{adjudication.abstain_reason}</p>
           )}
@@ -63,7 +74,7 @@ export function VerdictCard({
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" onClick={() => setShowWhy((v) => !v)}>
-          <HelpCircle className="h-3.5 w-3.5" /> Why?
+          <HelpCircle className="h-3.5 w-3.5" /> {showWhy ? 'Hide details' : 'Details & stats'}
         </Button>
         {saved ? (
           <span className="inline-flex items-center gap-1 text-[11px] text-verdict-clear">
@@ -88,7 +99,7 @@ export function VerdictCard({
 
       {showWhy && (
         <div className="mt-3 space-y-2 rounded-lg border border-border bg-surface-2 p-3 text-[11px]">
-          <div className="font-mono uppercase tracking-wide text-muted">Full trace</div>
+          <div className="font-mono uppercase tracking-wide text-muted">Details — stats &amp; full trace</div>
           {ensemble && (
             <div className="grid grid-cols-2 gap-x-4 gap-y-1">
               <Detail k="weighted_score" v={ensemble.weightedScore.toFixed(3)} />
