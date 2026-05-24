@@ -1,5 +1,6 @@
 import { sleep } from '@/lib/utils';
 import { HfError } from './errors';
+import { classifyHttpFailure, providerStatusStore } from '@/store/providerStatus';
 
 /**
  * Hugging Face Inference API — PRIMARY perception layer.
@@ -37,8 +38,14 @@ export async function hfImageInference(
   model: string,
   image: Blob,
 ): Promise<HfResult> {
-  if (!token) throw new HfError('Hugging Face token missing');
-  if (!model) throw new HfError('Hugging Face model id missing');
+  if (!token) {
+    providerStatusStore.set('hf', { state: 'not-configured', note: 'no token' });
+    throw new HfError('Hugging Face token missing');
+  }
+  if (!model) {
+    providerStatusStore.set('hf', { state: 'not-configured', note: 'no model id' });
+    throw new HfError('Hugging Face model id missing');
+  }
 
   const url = `${HF_BASE}/${model}`;
   const start = performance.now();
@@ -58,6 +65,10 @@ export async function hfImageInference(
       });
     } catch (err) {
       // Network / CORS failure — not retryable in a useful way.
+      providerStatusStore.set('hf', {
+        state: 'network',
+        note: `network: ${(err as Error).message.slice(0, 80)}`,
+      });
       throw new HfError(
         `network error calling HF (${(err as Error).message}). If this is CORS, the model may not be reachable from the browser.`,
       );
@@ -65,6 +76,7 @@ export async function hfImageInference(
 
     if (res.ok) {
       const raw: unknown = await res.json();
+      providerStatusStore.set('hf', { state: 'ok', note: `model ${model}` });
       return {
         raw,
         latencyMs: performance.now() - start,
@@ -100,6 +112,11 @@ export async function hfImageInference(
 
     // Any other non-2xx is a hard failure for this provider.
     const text = await res.text().catch(() => '');
+    const classified = classifyHttpFailure(res.status, text);
+    providerStatusStore.set('hf', {
+      state: classified.state,
+      note: `${classified.humanReason} (model ${model})`,
+    });
     throw new HfError(`HF ${res.status}: ${text.slice(0, 240)}`, res.status, text);
   }
 
@@ -138,8 +155,14 @@ export async function hfEndpointEmbedding(
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
+    const classified = classifyHttpFailure(res.status, text);
+    providerStatusStore.set('hf', {
+      state: classified.state,
+      note: `endpoint: ${classified.humanReason}`,
+    });
     throw new HfError(`HF endpoint ${res.status}: ${text.slice(0, 240)}`, res.status, text);
   }
   const raw: unknown = await res.json();
+  providerStatusStore.set('hf', { state: 'ok', note: 'endpoint embedding' });
   return { raw, latencyMs: performance.now() - start, coldStartWaitMs: 0 };
 }

@@ -1,5 +1,6 @@
 import { blobToDataURL, sleep } from '@/lib/utils';
 import { ReplicateError } from './errors';
+import { classifyHttpFailure, providerStatusStore } from '@/store/providerStatus';
 
 /**
  * Replicate API — per-stage FALLBACK.
@@ -48,8 +49,14 @@ export async function replicatePredict(
   image: Blob,
   input: Record<string, unknown> = {},
 ): Promise<ReplicateResult> {
-  if (!token) throw new ReplicateError('Replicate token missing');
-  if (!version) throw new ReplicateError('Replicate model version missing');
+  if (!token) {
+    providerStatusStore.set('replicate', { state: 'not-configured', note: 'no token' });
+    throw new ReplicateError('Replicate token missing');
+  }
+  if (!version) {
+    providerStatusStore.set('replicate', { state: 'not-configured', note: 'no model version' });
+    throw new ReplicateError('Replicate model version missing');
+  }
 
   const start = performance.now();
   const dataUrl = await blobToDataURL(image);
@@ -67,6 +74,11 @@ export async function replicatePredict(
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
+      const classified = classifyHttpFailure(res.status, text);
+      providerStatusStore.set('replicate', {
+        state: classified.state,
+        note: `create: ${classified.humanReason}`,
+      });
       throw new ReplicateError(
         `Replicate create ${res.status}: ${text.slice(0, 240)}`,
         res.status,
@@ -76,6 +88,10 @@ export async function replicatePredict(
     created = (await res.json()) as Prediction;
   } catch (err) {
     if (err instanceof ReplicateError) throw err;
+    providerStatusStore.set('replicate', {
+      state: 'network',
+      note: `network: ${(err as Error).message.slice(0, 80)}`,
+    });
     throw new ReplicateError(
       `network error creating Replicate prediction (${(err as Error).message}). May be CORS — see README.`,
     );
@@ -108,6 +124,10 @@ export async function replicatePredict(
   }
 
   if (current.status !== 'succeeded') {
+    providerStatusStore.set('replicate', {
+      state: 'other-error',
+      note: `prediction ${current.status}: ${(current.error ?? 'no detail').slice(0, 80)}`,
+    });
     throw new ReplicateError(
       `Replicate prediction ${current.status}: ${current.error ?? 'no detail'}`,
       undefined,
@@ -115,5 +135,6 @@ export async function replicatePredict(
     );
   }
 
+  providerStatusStore.set('replicate', { state: 'ok', note: `version ${version.slice(0, 12)}…` });
   return { raw: current.output, latencyMs: performance.now() - start };
 }

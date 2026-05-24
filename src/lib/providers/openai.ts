@@ -1,4 +1,5 @@
 import { OpenAIError } from './errors';
+import { classifyHttpFailure, providerStatusStore } from '@/store/providerStatus';
 
 /**
  * OpenAI — ORCHESTRATION ONLY (quality gate, VLM ensemble member, adjudicator).
@@ -101,7 +102,10 @@ export interface OpenAIJsonResult<T> {
 
 /** Non-streaming JSON call with automatic gpt-5.5 -> gpt-5.5-instant fallback. */
 export async function openaiJSON<T>(opts: VisionJsonOpts): Promise<OpenAIJsonResult<T>> {
-  if (!opts.apiKey) throw new OpenAIError('OpenAI API key missing');
+  if (!opts.apiKey) {
+    providerStatusStore.set('openai', { state: 'not-configured', note: 'no API key' });
+    throw new OpenAIError('OpenAI API key missing');
+  }
 
   const models = [opts.model, opts.fallbackModel].filter(
     (m, i, a) => m && a.indexOf(m) === i,
@@ -124,10 +128,16 @@ export async function openaiJSON<T>(opts: VisionJsonOpts): Promise<OpenAIJsonRes
       const res = await postResponses(opts.apiKey, body);
       if (!res.ok) {
         const text = await res.text().catch(() => '');
+        const classified = classifyHttpFailure(res.status, text);
+        providerStatusStore.set('openai', {
+          state: classified.state,
+          note: `${classified.humanReason} (model ${model})`,
+        });
         throw new OpenAIError(`OpenAI ${res.status}: ${text.slice(0, 240)}`, res.status, text);
       }
       const raw: unknown = await res.json();
       const data = extractJSON<T>(extractOutputText(raw));
+      providerStatusStore.set('openai', { state: 'ok', note: `model ${model}` });
       return { data, raw, modelUsed: model, latencyMs: performance.now() - start, fellBack: i > 0 };
     } catch (err) {
       lastErr = err as Error;
@@ -160,7 +170,10 @@ export interface StreamResult {
  * before producing any tokens.
  */
 export async function openaiStream(opts: StreamOpts): Promise<StreamResult> {
-  if (!opts.apiKey) throw new OpenAIError('OpenAI API key missing');
+  if (!opts.apiKey) {
+    providerStatusStore.set('openai', { state: 'not-configured', note: 'no API key' });
+    throw new OpenAIError('OpenAI API key missing');
+  }
   const models = [opts.model, opts.fallbackModel].filter(
     (m, i, a) => m && a.indexOf(m) === i,
   );
@@ -183,6 +196,11 @@ export async function openaiStream(opts: StreamOpts): Promise<StreamResult> {
       const res = await postResponses(opts.apiKey, body);
       if (!res.ok || !res.body) {
         const text = await res.text().catch(() => '');
+        const classified = classifyHttpFailure(res.status, text);
+        providerStatusStore.set('openai', {
+          state: classified.state,
+          note: `stream: ${classified.humanReason} (model ${model})`,
+        });
         throw new OpenAIError(`OpenAI ${res.status}: ${text.slice(0, 240)}`, res.status, text);
       }
 
@@ -215,6 +233,7 @@ export async function openaiStream(opts: StreamOpts): Promise<StreamResult> {
           }
         }
       }
+      providerStatusStore.set('openai', { state: 'ok', note: `stream model ${model}` });
       return { text: full, modelUsed: model, latencyMs: performance.now() - start, fellBack: i > 0 };
     } catch (err) {
       lastErr = err as Error;
