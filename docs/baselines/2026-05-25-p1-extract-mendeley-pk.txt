@@ -1,0 +1,6 @@
+mode=external_holdout  device=mps  images=3008  batch=16  workers=6  working_res=1024  -> features_mendeley_pk.npz
+
+
+MONOCHROME1 SUSPECTED (detect-only, not transformed) per source: {'mendeley_pk': 129}  — investigate if a source has a non-trivial rate; medical-grade needs DICOM tags
+skipped images: 0/3008 (every indexed image extracted cleanly)
+saved /Users/ahmadbilal/Downloads/hobby/TB detector/data/features_mendeley_pk.npz  cls=(3008, 768)  patches=(3008, 64, 768)  txrv=(3008, 1042)  grid_label=(3008, 8, 8)  zones=(3008, 64, 7)  has_box=0/3008  pos=2494  neg=514
