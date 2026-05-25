@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { HelpCircle, KeyRound, ThumbsDown, Check } from 'lucide-react';
+import { ChevronDown, HelpCircle, KeyRound, ThumbsDown, Check } from 'lucide-react';
 import type { Adjudication, EnsembleResult, RagResult, Verdict } from '@/lib/types';
 import { Button } from './ui/button';
 import { ConfidenceRing } from './ConfidenceRing';
@@ -32,6 +32,7 @@ export function VerdictCard({
   fallbackModel,
   lightboxOpen: lightboxOpenProp,
   onLightboxOpenChange,
+  onCollapse,
 }: {
   adjudication: Adjudication;
   ensemble: EnsembleResult | null;
@@ -52,6 +53,8 @@ export function VerdictCard({
   /** Lifted lightbox state — App owns the URL binding. */
   lightboxOpen?: boolean;
   onLightboxOpenChange?: (next: boolean) => void;
+  /** When provided, renders a collapse chevron that hands off to the summary bar. */
+  onCollapse?: () => void;
 }): JSX.Element {
   const [showWhy, setShowWhy] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -138,9 +141,20 @@ export function VerdictCard({
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
-      className="rounded-xl border bg-surface p-4"
+      className="relative rounded-xl border bg-surface p-4"
       style={{ borderColor: `${meta.color}66` }}
     >
+      {onCollapse && (
+        <button
+          type="button"
+          onClick={onCollapse}
+          aria-label="Collapse findings to use the viewer"
+          title="Collapse findings"
+          className="absolute right-3 top-3 z-10 rounded p-1 text-muted hover:bg-surface-2 hover:text-offwhite"
+        >
+          <ChevronDown className="h-4 w-4" />
+        </button>
+      )}
       {/* VERDICT — dominant, up top */}
       <div
         className="rounded-lg px-4 py-3 text-center"

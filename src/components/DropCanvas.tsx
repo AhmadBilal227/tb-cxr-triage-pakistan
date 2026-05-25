@@ -1,8 +1,6 @@
-import { useState } from 'react';
-import { motion } from 'framer-motion';
 import { ImageUp, FlaskConical } from 'lucide-react';
-import type { BBox } from '@/lib/providers/parsers';
 import { cn } from '@/lib/utils';
+import { XRayViewer } from './viewer/XRayViewer';
 
 export interface SampleEntry {
   file: string;
@@ -14,21 +12,25 @@ export interface SampleEntry {
 
 export function DropCanvas({
   imageUrl,
-  boxes,
   samples,
   onBrowse,
   onSample,
   onPickSample,
+  boxGrid,
+  zonalScores,
+  overlaysReady,
 }: {
   imageUrl: string | null;
-  boxes: BBox[];
   samples: SampleEntry[];
   onBrowse: () => void;
   onSample: () => void;
   onPickSample: (file: string) => void;
+  /** BoxEvidence 8x8 grid + per-zone scores; drive the in-viewer overlays. */
+  boxGrid?: ReadonlyArray<ReadonlyArray<number>> | null;
+  zonalScores?: Record<string, number> | null;
+  /** Overlay toggles render disabled until analysis has produced the evidence. */
+  overlaysReady?: boolean;
 }): JSX.Element {
-  const [nat, setNat] = useState<{ w: number; h: number } | null>(null);
-
   if (!imageUrl) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
@@ -87,48 +89,12 @@ export function DropCanvas({
   }
 
   return (
-    <div className="flex h-full items-center justify-center p-6">
-      <motion.div
-        layout
-        initial={{ scale: 0.96, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ type: 'spring', stiffness: 200, damping: 24 }}
-        className="relative max-h-full max-w-full"
-      >
-        <img
-          src={imageUrl}
-          alt="Chest X-ray under analysis"
-          className="max-h-[70vh] max-w-full rounded-lg border border-border object-contain"
-          onLoad={(e) => setNat({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
-        />
-        {/* Real detection boxes only — never faked heatmaps */}
-        {nat && boxes.length > 0 && (
-          <svg
-            className="pointer-events-none absolute inset-0 h-full w-full"
-            viewBox={`0 0 ${nat.w} ${nat.h}`}
-            preserveAspectRatio="xMidYMid meet"
-          >
-            {boxes.map((b, i) => (
-              <g key={i}>
-                <rect
-                  x={b.x}
-                  y={b.y}
-                  width={b.w}
-                  height={b.h}
-                  fill="none"
-                  stroke="#F59E0B"
-                  strokeWidth={Math.max(2, nat.w * 0.004)}
-                />
-                {b.label && (
-                  <text x={b.x} y={b.y - 4} fill="#F59E0B" style={{ fontSize: nat.w * 0.03 }} className="font-mono">
-                    {b.label} {b.score ? (b.score * 100).toFixed(0) + '%' : ''}
-                  </text>
-                )}
-              </g>
-            ))}
-          </svg>
-        )}
-      </motion.div>
-    </div>
+    <XRayViewer
+      imageUrl={imageUrl}
+      boxGrid={boxGrid}
+      zonalScores={zonalScores}
+      overlaysReady={overlaysReady}
+      imageClassName="max-h-[70vh] max-w-full"
+    />
   );
 }

@@ -13,7 +13,6 @@ import { useUrlBoundOverlay } from '@/hooks/useUrlBoundOverlay';
 import { useSettings } from '@/store/settings';
 import { embedWithFallback } from '@/lib/providers/classify';
 import { blobToDataURL } from '@/lib/utils';
-import type { BBox } from '@/lib/providers/parsers';
 import { addLabeledCase, getHistory, listHistory } from '@/lib/db';
 import { importLabeledSet, type ImportProgress } from '@/lib/labeledSet';
 import { buildSessionExport, downloadJSON } from '@/lib/export';
@@ -24,6 +23,7 @@ import { NoKeysBanner } from '@/components/NoKeysBanner';
 import { FirstUseModal } from '@/components/FirstUseModal';
 import { LeftRail } from '@/components/LeftRail';
 import { HistoryList } from '@/components/HistoryList';
+import { VerdictSummaryBar } from '@/components/VerdictSummaryBar';
 import { DropCanvas, type SampleEntry } from '@/components/DropCanvas';
 import { SettingsDrawer } from '@/components/SettingsDrawer';
 import { Dialog, LeftDrawerContent, DialogTitle } from '@/components/ui/dialog';
@@ -99,6 +99,9 @@ export default function App(): JSX.Element {
   const [dragging, setDragging] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [samples, setSamples] = useState<SampleEntry[]>([]);
+  // Collapse the findings card to a sticky summary bar so the viewer owns
+  // the canvas. Resets to expanded whenever a new analysis starts.
+  const [verdictCollapsed, setVerdictCollapsed] = useState(false);
 
   // Load the demo-sample manifest (real public-dataset CXRs in public/samples/).
   useEffect(() => {
@@ -131,6 +134,7 @@ export default function App(): JSX.Element {
         return { blob, url, name };
       });
       setStatus(null);
+      setVerdictCollapsed(false);
       try {
         await analyze(blob, name);
       } catch (err) {
@@ -295,10 +299,11 @@ export default function App(): JSX.Element {
     [onNewCase, navigate, onExport],
   );
 
-  // M23: detection-box overlay was sourced from the HF general CXR head's raw
-  // output. With that head removed, the overlay is always empty — a future
-  // BYO Replicate detection slot could re-populate it via `parseBoxes`.
-  const boxes = useMemo<BBox[]>(() => [], []);
+  // Validated-model evidence that drives the in-canvas viewer overlays
+  // (BoxEvidence heatmap + per-zone chips). Populated on the local-mode
+  // pathway; undefined on VLM-primary, where the toggles stay disabled.
+  const enrichment = state.adjudication?.local_enrichment;
+  const overlaysReady = Boolean(state.adjudication && !state.halted && enrichment);
 
   return (
     <div
@@ -368,11 +373,13 @@ export default function App(): JSX.Element {
           <div className="min-h-[40vh] flex-1 overflow-hidden">
             <DropCanvas
               imageUrl={image?.url ?? null}
-              boxes={boxes}
               samples={samples}
               onBrowse={() => imageInputRef.current?.click()}
               onSample={() => void onSample()}
               onPickSample={(f) => void onPickSample(f)}
+              boxGrid={enrichment?.box_evidence_grid ?? null}
+              zonalScores={enrichment?.zonal_scores ?? null}
+              overlaysReady={overlaysReady}
             />
           </div>
 
@@ -382,7 +389,7 @@ export default function App(): JSX.Element {
             </div>
           )}
 
-          {state.adjudication && !state.halted && (
+          {state.adjudication && !state.halted && !verdictCollapsed && (
             <div className="mx-6 mb-4">
               <Suspense
                 fallback={<div className="skeleton h-40 w-full rounded-xl" aria-label="Loading verdict" />}
@@ -400,9 +407,17 @@ export default function App(): JSX.Element {
                   fallbackModel={settings.models.adjudicatorFallback}
                   lightboxOpen={lightboxOpen}
                   onLightboxOpenChange={setLightboxOpen}
+                  onCollapse={() => setVerdictCollapsed(true)}
                 />
               </Suspense>
             </div>
+          )}
+
+          {state.adjudication && !state.halted && verdictCollapsed && (
+            <VerdictSummaryBar
+              adjudication={state.adjudication}
+              onExpand={() => setVerdictCollapsed(false)}
+            />
           )}
 
           {status && (
