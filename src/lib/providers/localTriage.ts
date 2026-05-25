@@ -43,6 +43,57 @@ export interface LocalTriageAudit {
   timestamp: string;
 }
 
+/**
+ * M24 ENRICHMENT FIELDS — intermediates the validated model already computes
+ * (see training/triage_core.TriageResult). The engine USED to discard these
+ * after the verdict; M24 surfaces them for the UI's evidence panels + the
+ * gpt-interpreter narrative provider.
+ *
+ * EVERY field is OPTIONAL on the wire — older servers omit them, the UI
+ * degrades to "details unavailable" gracefully. The frontend MUST NOT assume
+ * presence; the M21 VLM-primary path never produces any of these.
+ */
+export interface BoxEvidenceGrid {
+  /** Row-major 8x8 sigmoid probabilities from BoxEvidence.scorer pre-LSE-LBA pool. */
+  readonly grid: ReadonlyArray<ReadonlyArray<number>>;
+}
+
+/**
+ * Seven HONEST zone keys (upper/mid/lower per hemithorax + hilar/mediastinum).
+ * The trained ZonalSoftOR has N_ZONES=7; we do NOT fabricate a L/R split of
+ * the hilar/mediastinum channel.
+ */
+export type ZoneKey =
+  | 'upper_l'
+  | 'upper_r'
+  | 'mid_l'
+  | 'mid_r'
+  | 'lower_l'
+  | 'lower_r'
+  | 'hilar';
+
+export const ZONE_KEYS_ORDERED: readonly ZoneKey[] = [
+  'upper_r',
+  'mid_r',
+  'lower_r',
+  'upper_l',
+  'mid_l',
+  'lower_l',
+  'hilar',
+];
+
+export type ZonalScores = Partial<Record<ZoneKey, number>>;
+
+/** TorchXRayVision pathology probability map (variable keys; names come verbatim from DenseNet.pathologies). */
+export type TxrvPathologies = Record<string, number>;
+
+export interface CropBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface LocalTriageResult {
   /** Calibrated TB probability under T (the validated head's temperature). */
   tb_prob: number;
@@ -61,6 +112,19 @@ export interface LocalTriageResult {
   /** ms per stage + total — recorded for the UI's trace panel. */
   latency_ms: Record<string, number>;
   audit: LocalTriageAudit;
+  // -------------------------------------------------------------------------
+  // M24 enrichment — all OPTIONAL (older servers omit; UI degrades gracefully).
+  // -------------------------------------------------------------------------
+  /** 8x8 sigmoid'd per-cell box-evidence from BoxEvidence.scorer (pre LSE-LBA). */
+  box_evidence_grid?: number[][];
+  /** Per-zone calibrated TB probability sigmoid(zone_logit/T) for the 7 trained zones. */
+  zonal_scores?: ZonalScores;
+  /** 18 TorchXRayVision named-finding probabilities (sigmoid of raw logits; uncalibrated). */
+  txrv_pathologies?: TxrvPathologies;
+  /** Seg-driven letterbox crop in ORIGINAL image pixel coords. */
+  crop_box?: CropBox;
+  /** MONOCHROME1 polarity heuristic (already drives an image_quality warning). */
+  inversion_detected?: boolean;
 }
 
 export interface LocalHealthOk {
@@ -96,6 +160,33 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  * library here — strict TS gives us shape checking once the result is typed, and
  * keeping this hand-rolled means a single dep-free file the test suite can mock.
  */
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v);
+}
+
+function isBoxEvidenceGrid(v: unknown): v is number[][] {
+  if (!Array.isArray(v) || v.length !== 8) return false;
+  return v.every(
+    (row) =>
+      Array.isArray(row) &&
+      row.length === 8 &&
+      row.every((cell) => isFiniteNumber(cell) && cell >= 0 && cell <= 1),
+  );
+}
+
+function isCropBox(v: unknown): v is CropBox {
+  if (v === null || typeof v !== 'object') return false;
+  const r = v as Record<string, unknown>;
+  return ['x', 'y', 'w', 'h'].every((k) => isFiniteNumber(r[k]));
+}
+
+function isStringNumberRecord(v: unknown): v is Record<string, number> {
+  if (v === null || typeof v !== 'object') return false;
+  return Object.values(v as Record<string, unknown>).every(
+    (val) => isFiniteNumber(val) && val >= 0 && val <= 1,
+  );
+}
+
 function isLocalTriageResult(o: unknown): o is LocalTriageResult {
   if (o === null || typeof o !== 'object') return false;
   const r = o as Record<string, unknown>;
@@ -113,6 +204,13 @@ function isLocalTriageResult(o: unknown): o is LocalTriageResult {
   if (typeof audit.model_id !== 'string') return false;
   if (typeof audit.model_sha !== 'string') return false;
   if (typeof audit.git_sha !== 'string') return false;
+  // M24 optional enrichment fields — present-and-valid OR absent are both fine. Reject only
+  // when a field is present but malformed (a real schema regression we want to surface).
+  if (r.box_evidence_grid !== undefined && !isBoxEvidenceGrid(r.box_evidence_grid)) return false;
+  if (r.zonal_scores !== undefined && !isStringNumberRecord(r.zonal_scores)) return false;
+  if (r.txrv_pathologies !== undefined && !isStringNumberRecord(r.txrv_pathologies)) return false;
+  if (r.crop_box !== undefined && !isCropBox(r.crop_box)) return false;
+  if (r.inversion_detected !== undefined && typeof r.inversion_detected !== 'boolean') return false;
   return true;
 }
 

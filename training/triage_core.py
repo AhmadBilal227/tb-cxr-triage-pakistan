@@ -69,6 +69,7 @@ from extract_features import (  # noqa: E402
     _harmonize,
     _read_gray,
     letterbox_to_square,
+    zone_matrix_from_masks,
 )
 from preprocess import _get_seg  # noqa: E402  same segmenter used by extract_features
 from train_tb import InactiveSequelaeHead, TBHeadT2  # noqa: E402
@@ -113,6 +114,38 @@ class ImageQuality:
     warnings: list[str]
 
 
+# ---------------------------------------------------------------------------
+# M24 enrichment fields — INTERMEDIATES the validated model already computes
+# and that this engine USED to discard. None of these change the verdict; they
+# are surfaced for UI evidence panels and (downstream) the gpt-as-interpreter
+# narrative. ALL OPTIONAL on the wire — older servers omit them; the TS side
+# parses with `?:` so the orchestrator degrades gracefully.
+#
+# Honest-mapping note: `zonal_scores` has 7 keys (upper/mid/lower L+R + hilar)
+# because the trained ZonalSoftOR module uses ZONE_NAMES = ("RUZ", "RMZ",
+# "RLZ", "LUZ", "LMZ", "LLZ", "HILAR") and the hilar/mediastinal channel is a
+# single combined zone. We do NOT invent a L/R split where the model does not
+# compute one — see CASE_STUDY M24.
+# ---------------------------------------------------------------------------
+ZONE_KEYS: tuple[str, ...] = (
+    "upper_r", "mid_r", "lower_r", "upper_l", "mid_l", "lower_l", "hilar",
+)
+# 18 TorchXRayVision label names in the canonical order the DenseNet emits. The
+# trained head consumes these as the last 18 entries of the txrv feature block
+# (see N_TXRV_LOGITS in train_tb.py). These names come VERBATIM from
+# `xrv.models.DenseNet(weights="densenet121-res224-all").pathologies` and the
+# ORDER matters — column i of the head's `find_target` is the i-th label below.
+# (The DenseNet returns "Lung Lesion" / "Lung Opacity" / "Enlarged
+# Cardiomediastinum" with spaces; we keep them as-is to preserve the wire
+# contract with the source of truth.)
+TXRV_LABELS: tuple[str, ...] = (
+    "Atelectasis", "Consolidation", "Infiltration", "Pneumothorax", "Edema",
+    "Emphysema", "Fibrosis", "Effusion", "Pneumonia", "Pleural_Thickening",
+    "Cardiomegaly", "Nodule", "Mass", "Hernia", "Lung Lesion", "Fracture",
+    "Lung Opacity", "Enlarged Cardiomediastinum",
+)
+
+
 @dataclass(frozen=True)
 class TriageResult:
     tb_prob: float
@@ -124,9 +157,36 @@ class TriageResult:
     image_quality: ImageQuality
     latency_ms: dict[str, int]
     audit: TriageAudit
+    # ---- M24 enrichment intermediates (None when a lever was off or the model lacks the channel) ----
+    box_evidence_grid: list[list[float]] | None = None
+    """8x8 per-cell SIGMOID probabilities from the box-evidence head, BEFORE the LSE-LBA pool.
+    Captured from TBHeadT2's `evidence` return key; the same map `train_tb.evidence_maps_t2`
+    produces for localization scoring. `None` when the box lever is off."""
+
+    zonal_scores: dict[str, float] | None = None
+    """Per-zone calibrated TB probability `sigmoid(zone_logit / T)` for the 7 trained zones
+    (`upper_r, mid_r, lower_r, upper_l, mid_l, lower_l, hilar`). Captured from
+    ZonalSoftOR's `zone_logits` return. `None` when the zonal lever is off OR a zero
+    zone-membership matrix was supplied (the current deployment passes zeros — see the
+    `_zones` assignment in `run()` — so this surface honestly tells the UI 'zone evidence
+    is not available on this run' rather than fabricating a distribution)."""
+
+    txrv_pathologies: dict[str, float] | None = None
+    """Sigmoid-calibrated probabilities for the 18 TorchXRayVision named-finding logits the
+    pipeline already computes (txrv[:, 1024:]). These ARE the features fed into TBHeadT2's
+    fusion lever; surfacing them tells the UI which other findings the perception backbone
+    sees alongside TB. NOT independent diagnoses — feature scores."""
+
+    crop_box: dict[str, int] | None = None
+    """Letterbox seg-crop in ORIGINAL image pixel coordinates: {x, y, w, h}. The UI uses
+    this to align the 8x8 box-evidence overlay with the source CXR."""
+
+    inversion_detected: bool | None = None
+    """`_detect_inversion(g)`'s heuristic result (suspected MONOCHROME1 polarity). Already
+    drives the image_quality warning; surfacing the bool lets the UI render a chip."""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "tb_prob": self.tb_prob,
             "tb_logit": self.tb_logit,
             "s_inactive": self.s_inactive,
@@ -137,6 +197,20 @@ class TriageResult:
             "latency_ms": dict(self.latency_ms),
             "audit": asdict(self.audit),
         }
+        # Optional enrichment fields — only emit when present so the wire stays
+        # backwards-compatible (older clients ignore unknown keys; new clients
+        # use `?:` for these).
+        if self.box_evidence_grid is not None:
+            out["box_evidence_grid"] = [list(row) for row in self.box_evidence_grid]
+        if self.zonal_scores is not None:
+            out["zonal_scores"] = dict(self.zonal_scores)
+        if self.txrv_pathologies is not None:
+            out["txrv_pathologies"] = dict(self.txrv_pathologies)
+        if self.crop_box is not None:
+            out["crop_box"] = dict(self.crop_box)
+        if self.inversion_detected is not None:
+            out["inversion_detected"] = bool(self.inversion_detected)
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +326,16 @@ class TriageEngine:
             seg = seg.to(DEVICE)
         self._seg = seg
         self._lung_idx = lung_idx
+        # M24: SEPARATE channel indices for the lung-only and hilus/mediastinum channels
+        # so we can build a real zone-membership matrix on the fly (matches
+        # extract_features.py main() which reads both indices off `seg.targets`). When the
+        # segmenter is unavailable, both lists are empty — `zonal_scores` then reports None.
+        self._lung_only_idx: list[int] = []
+        self._hilus_med_idx: list[int] = []
+        if seg is not None:
+            targets = [str(t).lower() for t in seg.targets]
+            self._lung_only_idx = [i for i, t in enumerate(targets) if "lung" in t]
+            self._hilus_med_idx = [i for i, t in enumerate(targets) if "hilus" in t or "mediastinum" in t]
 
         # --- Heads ---
         # Architecture (d_tok=768, d_cls=768, d_txrv=1042) and lever set MUST match how
@@ -282,14 +366,16 @@ class TriageEngine:
                 g = np.array(Image.open(io.BytesIO(image_bytes)).convert("L"))
             except Exception as e:
                 raise ValueError(f"could not decode image bytes: {e!r}") from e
-        if _detect_inversion(g):
+        inversion = bool(_detect_inversion(g))
+        if inversion:
             warnings.append("suspected MONOCHROME1 polarity (heuristic only; DICOM tag needed for medical-grade)")
+        orig_h, orig_w = int(g.shape[0]), int(g.shape[1])
         harm = _harmonize(g)  # uint8, shorter-side == WORKING_RES, antialiased
         latency["harmonize"] = int((time.perf_counter() - t0) * 1000)
 
-        # --- 2. seg + crop + letterbox to square ---
+        # --- 2. seg + crop + letterbox to square (also exposes lung/hilus masks for zones) ---
         t0 = time.perf_counter()
-        crop_img_pil, crop_box, harm_wh = self._seg_crop_single(harm, warnings)
+        crop_img_pil, crop_box_tuple, harm_wh, lung_crop, hilus_crop = self._seg_crop_single(harm, warnings)
         latency["seg"] = int((time.perf_counter() - t0) * 1000)
 
         # --- 3. Rad-DINO (MPS) -> cls[768] + patches[64,768] ---
@@ -311,15 +397,78 @@ class TriageEngine:
         # all-zero soft zone matrix when we are not computing zones on the fly. The fitted
         # zonal lever's gate has g_min=0.25 so it still contributes via the floor. This mirrors
         # the M19 ONNX export path (training/export_onnx.py uses the same convention).
-        zones_t = torch.zeros(1, PATCH_GRID * PATCH_GRID, 7, dtype=torch.float32, device=DEVICE)
-        self.head_t2._zones = zones_t
+        #
+        # M24 invariant — DO NOT touch this forward. The 0.9999769 headline on tb-sample-1.jpg
+        # is conditioned on the zero-zones convention; switching to real zones here would
+        # change tb_prob and bust the M22 EXPERIMENT_LOG tripwire. Real zones are used in a
+        # SEPARATE, post-hoc forward (see below) solely to populate `zonal_scores` for the
+        # UI; the verdict pin stays.
+        zones_zero = torch.zeros(1, PATCH_GRID * PATCH_GRID, 7, dtype=torch.float32, device=DEVICE)
+        self.head_t2._zones = zones_zero
         with torch.no_grad():
             out_t2 = self.head_t2(cls_t, patches_t, txrv_t)
             logit_t2 = float(out_t2["logit"].cpu().numpy()[0])
+            # Box-evidence: TBHeadT2 already emits the 8x8 per-cell logits we used to discard.
+            # `evidence` is [B, 64] of LOGITS; sigmoid + reshape to 8x8 matches `train_tb.evidence_maps_t2`.
+            box_evidence_grid: list[list[float]] | None = None
+            ev_t = out_t2.get("evidence")
+            if ev_t is not None:
+                ev_probs = torch.sigmoid(ev_t).reshape(1, PATCH_GRID, PATCH_GRID).cpu().numpy()[0]
+                box_evidence_grid = [[float(ev_probs[r, c]) for c in range(PATCH_GRID)] for r in range(PATCH_GRID)]
             logit_seq = float(self.head_seq(cls_t, patches_t, txrv_t).cpu().numpy()[0])
         tb_prob = _platt_sigmoid(logit_t2, self.T)
         s_inactive = _platt_sigmoid(logit_seq, self.T_sequelae)
         latency["heads"] = int((time.perf_counter() - t0) * 1000)
+
+        # --- 5b. M24 enrichment forward (zonal_scores only) — SEPARATE from the verdict forward.
+        # If a real zone matrix can be built from the lung+hilus masks, run TBHeadT2 again on the
+        # SAME features but with real zones, and capture `zone_logits` to report per-zone
+        # calibrated TB probabilities under T. The verdict logit stays from the zero-zones forward.
+        zonal_scores: dict[str, float] | None = None
+        if lung_crop is not None and hilus_crop is not None:
+            zm = zone_matrix_from_masks(lung_crop, hilus_crop, G=PATCH_GRID)  # [64, 7]
+            if zm.sum() > 0:  # at least one non-background patch
+                zones_t = torch.tensor(zm[None, ...], dtype=torch.float32, device=DEVICE)
+                # Snapshot + restore: leave the engine state identical to the verdict forward.
+                self.head_t2._zones = zones_t
+                with torch.no_grad():
+                    out_real = self.head_t2(cls_t, patches_t, txrv_t)
+                self.head_t2._zones = zones_zero  # restore
+                zl_t = out_real.get("zone_logits")
+                if zl_t is not None:
+                    zl = zl_t.cpu().numpy()[0]  # [7]
+                    # Per-zone calibrated TB probability under the SAME temperature the image
+                    # logit is calibrated with. The per-zone logits are scored by the SAME
+                    # 1-dim scorer + zone-floored gate that produces the image-level zonal logit
+                    # (which the trained head log-odds-blends into the final tb_logit), so applying
+                    # T is the natural calibration choice; same alphabet as `tb_prob`.
+                    zonal_scores = {key: _platt_sigmoid(float(zl[i]), self.T) for i, key in enumerate(ZONE_KEYS)}
+
+        # TXRV pathologies: the last 18 entries of txrv_arr are RAW logits; sigmoid -> probs.
+        # These ARE the features the trained head's fusion lever consumes — surfacing them shows
+        # the UI what OTHER findings the perception backbone sees. NOT independent diagnoses;
+        # uncalibrated per-class (TXRV densenet121-res224-all probabilities, not site-recalibrated).
+        find_logits = txrv_arr[len(txrv_arr) - 18 :]
+        txrv_pathologies: dict[str, float] = {
+            label: float(1.0 / (1.0 + np.exp(-float(find_logits[i]))))
+            for i, label in enumerate(TXRV_LABELS)
+        }
+
+        # crop_box in the HARMONIZED frame; map back to ORIGINAL pixel coords. _harmonize
+        # antialias-resizes the SHORTER side to WORKING_RES while preserving aspect ratio,
+        # so the harmonized-to-original scale factor is uniform = orig_short / WORKING_RES.
+        # (We can't recover sub-pixel translation if _harmonize ever added padding — it does
+        # not; harmonize is a pure resize — so this is a faithful pixel-space mapping.)
+        y0h, y1h, x0h, x1h = crop_box_tuple
+        harm_w, harm_h = harm_wh  # harmonized width, height
+        scale_x = orig_w / float(harm_w) if harm_w > 0 else 1.0
+        scale_y = orig_h / float(harm_h) if harm_h > 0 else 1.0
+        crop_box = {
+            "x": int(round(x0h * scale_x)),
+            "y": int(round(y0h * scale_y)),
+            "w": int(round((x1h - x0h) * scale_x)),
+            "h": int(round((y1h - y0h) * scale_y)),
+        }
 
         latency["total"] = int((time.perf_counter() - t_total0) * 1000)
 
@@ -347,6 +496,11 @@ class TriageEngine:
             image_quality=ImageQuality(warnings=warnings),
             latency_ms=latency,
             audit=audit,
+            box_evidence_grid=box_evidence_grid,
+            zonal_scores=zonal_scores,
+            txrv_pathologies=txrv_pathologies,
+            crop_box=crop_box,
+            inversion_detected=inversion,
         )
 
     # ----------------------------------------------------------------------
@@ -354,16 +508,28 @@ class TriageEngine:
     # ----------------------------------------------------------------------
     def _seg_crop_single(
         self, harm: np.ndarray, warnings: list[str]
-    ) -> tuple[Image.Image, tuple[int, int, int, int], tuple[int, int]]:
+    ) -> tuple[
+        Image.Image,
+        tuple[int, int, int, int],
+        tuple[int, int],
+        np.ndarray | None,
+        np.ndarray | None,
+    ]:
         """Lung-mask + dilate + 18% margin crop + LETTERBOX to square. Mirrors extract_features.seg_crop
         for batch size 1. Falls back to the whole harmonized frame (letterboxed) when seg is unavailable
-        or returns an empty mask; both fallbacks record an image_quality warning."""
+        or returns an empty mask; both fallbacks record an image_quality warning.
+
+        M24 extension — ALSO returns the LETTERBOXED lung-only and hilus/mediastinum SOFT masks (or
+        None when the segmenter is unavailable / channels missing) so the engine can build the same
+        zone-membership matrix `extract_features.zone_matrix_from_masks` expects. The masks register
+        pixel-for-pixel with the Rad-DINO patch tokens (extract_features.py letterbox invariant).
+        """
         H, W = harm.shape
         if self._seg is None or not self._lung_idx:
             warnings.append("no lung segmenter available (fallback to whole frame)")
             cb = (0, H, 0, W)
             lb = letterbox_to_square(harm, cb, pad_value=0.0)
-            return Image.fromarray(cv2.cvtColor(lb, cv2.COLOR_GRAY2RGB)), cb, (W, H)
+            return Image.fromarray(cv2.cvtColor(lb, cv2.COLOR_GRAY2RGB)), cb, (W, H), None, None
 
         norm = self._xrv.datasets.normalize(cv2.resize(harm, (512, 512)).astype("float32"), 255)
         t = torch.from_numpy(norm)[None, None, ...].to(DEVICE)
@@ -372,10 +538,24 @@ class TriageEngine:
         m_small = seg_prob[:, self._lung_idx].amax(dim=1)[0].cpu().numpy()  # [512,512]
         mask = (cv2.resize(m_small, (W, H)) > 0.5).astype("uint8")
 
+        # M24: also fetch the SEPARATE lung-only and hilus/mediastinum channels (the combined
+        # `_lung_idx` is the crop driver; zones need them split — extract_features.py main()
+        # makes the same split).
+        lung_s_full: np.ndarray | None = None
+        hil_s_full: np.ndarray | None = None
+        if self._lung_only_idx:
+            lung_s_small = seg_prob[:, self._lung_only_idx].amax(dim=1)[0].cpu().numpy()
+            lung_s_full = cv2.resize(lung_s_small, (W, H))
+        if self._hilus_med_idx:
+            hil_s_small = seg_prob[:, self._hilus_med_idx].amax(dim=1)[0].cpu().numpy()
+            hil_s_full = cv2.resize(hil_s_small, (W, H))
+
         if mask.sum() == 0:
             warnings.append("no clear lung mask (fallback to whole frame)")
             cb = (0, H, 0, W)
             soft = harm
+            lung_crop_raw = lung_s_full
+            hilus_crop_raw = hil_s_full
         else:
             k = max(5, int(0.04 * max(H, W)))
             md = cv2.dilate(mask, np.ones((k, k), np.uint8))
@@ -387,6 +567,8 @@ class TriageEngine:
             x0, x1 = max(0, x0 - mx), min(W, x1 + mx)
             soft = (harm.astype("float32") * (0.3 + 0.7 * md)).clip(0, 255).astype("uint8")[y0:y1, x0:x1]
             cb = (y0, y1, x0, x1)
+            lung_crop_raw = lung_s_full[y0:y1, x0:x1] if lung_s_full is not None else None
+            hilus_crop_raw = hil_s_full[y0:y1, x0:x1] if hil_s_full is not None else None
 
         # LETTERBOX: pad cropped frame to square so Rad-DINO's shortest_edge=518 + center_crop=518x518
         # becomes a uniform resize (no chopping of apical/costophrenic content). This is the M12 fix.
@@ -394,7 +576,21 @@ class TriageEngine:
         S = lb.shape[0]
         if S != lb.shape[1]:  # defensive — letterbox_to_square produces SxS
             warnings.append("non-square crop after letterbox (unexpected; fed as-is to Rad-DINO)")
-        return Image.fromarray(cv2.cvtColor(lb, cv2.COLOR_GRAY2RGB)), cb, (W, H)
+        # Letterbox the masks IDENTICALLY (pad_value=0 → background / zero lung), so they register
+        # with the Rad-DINO patch tokens (same letterbox invariant as extract_features.py).
+        lung_crop_lb = (
+            letterbox_to_square(lung_crop_raw, cb, pad_value=0.0) if lung_crop_raw is not None else None
+        )
+        hilus_crop_lb = (
+            letterbox_to_square(hilus_crop_raw, cb, pad_value=0.0) if hilus_crop_raw is not None else None
+        )
+        return (
+            Image.fromarray(cv2.cvtColor(lb, cv2.COLOR_GRAY2RGB)),
+            cb,
+            (W, H),
+            lung_crop_lb,
+            hilus_crop_lb,
+        )
 
     def _rad_forward(self, img: Image.Image) -> tuple[np.ndarray, np.ndarray]:
         """Rad-DINO pooler_output (CLS, [768]) + patch tokens pooled 37x37 -> 8x8 ([64, 768] fp32).

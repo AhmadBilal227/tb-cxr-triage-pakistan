@@ -5,6 +5,11 @@ import type { Adjudication, EnsembleResult, RagResult, Verdict } from '@/lib/typ
 import { Button } from './ui/button';
 import { ConfidenceRing } from './ConfidenceRing';
 import { cn } from '@/lib/utils';
+import { BoxEvidenceHeatmap } from './details/BoxEvidenceHeatmap';
+import { ZonalBars } from './details/ZonalBars';
+import { PathologyList } from './details/PathologyList';
+import { ClinicianReport } from './details/ClinicianReport';
+import type { LocalTriageResult } from '@/lib/providers/localTriage';
 
 const VERDICT_META: Record<Verdict, { label: string; color: string }> = {
   tb: { label: 'TB SUSPECTED', color: '#C8102E' },
@@ -19,6 +24,10 @@ export function VerdictCard({
   fallbackRate,
   onDisagree,
   onOpenSettings,
+  imageDataUrl,
+  openaiKey,
+  primaryModel,
+  fallbackModel,
 }: {
   adjudication: Adjudication;
   ensemble: EnsembleResult | null;
@@ -27,6 +36,15 @@ export function VerdictCard({
   onDisagree: (label: 0 | 1) => Promise<void>;
   /** Required for the "perception unavailable" state's CTA. Optional everywhere else. */
   onOpenSettings?: () => void;
+  /**
+   * M24 — required only for the ClinicianReport CTA in the Details panel. When
+   * absent the ClinicianReport section is omitted (graceful degradation; VLM-
+   * primary runs and pre-M24 adjudications never set it).
+   */
+  imageDataUrl?: string;
+  openaiKey?: string;
+  primaryModel?: string;
+  fallbackModel?: string;
 }): JSX.Element {
   const [showWhy, setShowWhy] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -80,6 +98,28 @@ export function VerdictCard({
     setFeedbackOpen(false);
   };
 
+  // ----------------------------------------------------------------------
+  // M24 — surface the validated-model intermediates when present. The fields
+  // populate on the local-onnx-via-server pathway; the VLM-primary path leaves
+  // `local_enrichment` undefined, and each sub-field on `local_enrichment` is
+  // individually optional. Reach across `ensemble.members` for the FULL
+  // LocalTriageResult (kept in member.raw for the local-triage member) — the
+  // ClinicianReport's gpt-interpreter needs more than just the enrichment
+  // sub-fields (calibration + threshold + s_inactive too).
+  // ----------------------------------------------------------------------
+  const enrichment = adjudication.local_enrichment;
+  const boxGrid = enrichment?.box_evidence_grid;
+  const zonalScores = enrichment?.zonal_scores;
+  const txrvPathologies = enrichment?.txrv_pathologies;
+  const localMember = ensemble?.members.find((m) => m.id === 'tb' && m.provider_used === 'local-triage');
+  const localResult =
+    localMember && localMember.raw && typeof localMember.raw === 'object'
+      ? (localMember.raw as LocalTriageResult)
+      : null;
+  const clinicianReportReady = Boolean(
+    localResult && imageDataUrl && primaryModel && fallbackModel,
+  );
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
@@ -122,6 +162,13 @@ export function VerdictCard({
           )}
         </div>
       </div>
+
+      {/* M24 always-on: BoxEvidence heatmap renders when the local pathway emitted a grid. */}
+      {boxGrid && (
+        <div className="mt-3 rounded-lg border border-border bg-surface-2 p-3">
+          <BoxEvidenceHeatmap grid={boxGrid} imageUrl={imageDataUrl} />
+        </div>
+      )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" onClick={() => setShowWhy((v) => !v)}>
@@ -179,6 +226,30 @@ export function VerdictCard({
               {adjudication.auto_abstain_reasons.map((r, i) => (
                 <div key={i}>• {r}</div>
               ))}
+            </div>
+          )}
+          {/* M24 — per-zone bar chart, sorted desc by probability. */}
+          {zonalScores && Object.keys(zonalScores).length > 0 && (
+            <div className="border-t border-border pt-2">
+              <ZonalBars scores={zonalScores} />
+            </div>
+          )}
+          {/* M24 — TorchXRayVision named-finding chips (18 pathology scores). */}
+          {txrvPathologies && Object.keys(txrvPathologies).length > 0 && (
+            <div className="border-t border-border pt-2">
+              <PathologyList pathologies={txrvPathologies} />
+            </div>
+          )}
+          {/* M24 — on-demand GPT clinician report. Requires local result + key + image url. */}
+          {clinicianReportReady && localResult && imageDataUrl && primaryModel && fallbackModel && (
+            <div className="border-t border-border pt-2">
+              <ClinicianReport
+                apiKey={openaiKey ?? ''}
+                primaryModel={primaryModel}
+                fallbackModel={fallbackModel}
+                imageDataUrl={imageDataUrl}
+                localResult={localResult}
+              />
             </div>
           )}
         </div>

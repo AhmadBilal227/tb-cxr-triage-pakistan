@@ -159,3 +159,94 @@ describe('localTriage — base URL normalization', () => {
     expect(capturedUrl).toBe('http://localhost:8000/triage');
   });
 });
+
+/**
+ * M24 ENRICHMENT — the engine now optionally returns box_evidence_grid (8x8),
+ * zonal_scores (7 keys), txrv_pathologies (18 keys), crop_box, inversion_detected.
+ * The provider must (a) parse them when present, (b) accept payloads that omit
+ * them entirely (older servers / VLM-primary paths), (c) reject MALFORMED enrichment
+ * (so a real schema regression surfaces instead of bleeding wrong numbers to the UI).
+ */
+describe('localTriage — M24 enrichment fields', () => {
+  function evidenceGrid8x8(fill: number = 0.5): number[][] {
+    return Array.from({ length: 8 }, () =>
+      Array.from({ length: 8 }, () => fill),
+    );
+  }
+
+  it('parses a payload WITH all enrichment fields present', async () => {
+    const payload: LocalTriageResult = {
+      ...validResultPayload(),
+      box_evidence_grid: evidenceGrid8x8(0.7),
+      zonal_scores: {
+        upper_r: 0.4,
+        mid_r: 0.05,
+        lower_r: 0.01,
+        upper_l: 0.15,
+        mid_l: 0.04,
+        lower_l: 0.005,
+        hilar: 0.03,
+      },
+      txrv_pathologies: {
+        Atelectasis: 0.1,
+        Consolidation: 0.25,
+        Pneumonia: 0.2,
+      },
+      crop_box: { x: 10, y: 20, w: 800, h: 800 },
+      inversion_detected: false,
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(payload)));
+    const r = await localTriage(fakeBlob, 'http://localhost:8000');
+    expect(r.box_evidence_grid?.length).toBe(8);
+    expect(r.zonal_scores?.upper_r).toBeCloseTo(0.4, 6);
+    expect(r.txrv_pathologies?.Consolidation).toBeCloseTo(0.25, 6);
+    expect(r.crop_box?.w).toBe(800);
+    expect(r.inversion_detected).toBe(false);
+  });
+
+  it('parses a payload WITHOUT any enrichment fields (older server / VLM-primary fall-back)', async () => {
+    const payload = validResultPayload();
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(payload)));
+    const r = await localTriage(fakeBlob, 'http://localhost:8000');
+    expect(r.box_evidence_grid).toBeUndefined();
+    expect(r.zonal_scores).toBeUndefined();
+    expect(r.txrv_pathologies).toBeUndefined();
+    expect(r.crop_box).toBeUndefined();
+    expect(r.inversion_detected).toBeUndefined();
+  });
+
+  it('schema-errors when box_evidence_grid is present but malformed (wrong shape)', async () => {
+    const bad = {
+      ...validResultPayload(),
+      // 7x8 instead of 8x8 — a real regression we want to catch.
+      box_evidence_grid: Array.from({ length: 7 }, () => Array(8).fill(0)),
+    } as unknown;
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(bad)));
+    await expect(localTriage(fakeBlob, 'http://localhost:8000')).rejects.toBeInstanceOf(
+      LocalTriageError,
+    );
+    expect(providerStatusStore.get()[LOCAL_TRIAGE_PROVIDER].state).toBe('schema-error');
+  });
+
+  it('schema-errors when crop_box is present but missing a required key', async () => {
+    const bad = {
+      ...validResultPayload(),
+      crop_box: { x: 0, y: 0, w: 100 /* h missing */ },
+    } as unknown;
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(bad)));
+    await expect(localTriage(fakeBlob, 'http://localhost:8000')).rejects.toBeInstanceOf(
+      LocalTriageError,
+    );
+  });
+
+  it('schema-errors when zonal_scores carries an out-of-range value', async () => {
+    const bad = {
+      ...validResultPayload(),
+      zonal_scores: { upper_r: 1.4 },  // probabilities must live in [0,1]
+    } as unknown;
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(bad)));
+    await expect(localTriage(fakeBlob, 'http://localhost:8000')).rejects.toBeInstanceOf(
+      LocalTriageError,
+    );
+  });
+});
