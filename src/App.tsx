@@ -4,6 +4,7 @@ import {
   Activity,
   BarChart3,
   Command as CommandIcon,
+  History as HistoryIcon,
   Settings as SettingsIcon,
   ShieldAlert,
 } from 'lucide-react';
@@ -22,8 +23,10 @@ import { SafetyBanner } from '@/components/SafetyBanner';
 import { NoKeysBanner } from '@/components/NoKeysBanner';
 import { FirstUseModal } from '@/components/FirstUseModal';
 import { LeftRail } from '@/components/LeftRail';
+import { HistoryList } from '@/components/HistoryList';
 import { DropCanvas, type SampleEntry } from '@/components/DropCanvas';
 import { SettingsDrawer } from '@/components/SettingsDrawer';
+import { Dialog, LeftDrawerContent, DialogTitle } from '@/components/ui/dialog';
 import { CommandPalette, buildActions } from '@/components/CommandPalette';
 import { makeSampleCXR } from '@/lib/sample';
 import { Button } from '@/components/ui/button';
@@ -81,6 +84,8 @@ export default function App(): JSX.Element {
   const [settingsOpen, setSettingsOpen] = useUrlBoundOverlay('settings');
   const [paletteOpen, setPaletteOpen] = useUrlBoundOverlay('palette');
   const [traceOpen, setTraceOpen] = useUrlBoundOverlay('trace');
+  // Mobile-only history sheet (below md, where the desktop rail is hidden).
+  const [historyOpen, setHistoryOpen] = useUrlBoundOverlay('history');
   // Lightbox state lifted from VerdictCard so it can be URL-bound here in
   // App (where the Router context lives) without forcing the existing
   // VerdictCard tests to wrap in MemoryRouter.
@@ -312,6 +317,15 @@ export default function App(): JSX.Element {
       {/* Header */}
       <header className="flex items-center justify-between border-b border-border px-4 py-2">
         <div className="flex min-w-0 items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="md:hidden"
+            onClick={() => setHistoryOpen(true)}
+            aria-label="Open history"
+          >
+            <HistoryIcon className="h-4 w-4" />
+          </Button>
           <ShieldAlert className="h-4 w-4 shrink-0 text-verdict-tb" />
           <span className="text-sm font-semibold tracking-tight">TB Triage</span>
           <span className="hidden font-mono text-[10px] text-muted sm:inline">research preview</span>
@@ -331,7 +345,9 @@ export default function App(): JSX.Element {
             onClick={() => setTraceOpen(!traceOpen)}
             aria-pressed={traceOpen}
             aria-label={traceOpen ? 'Hide trace' : 'Show trace'}
-            className={traceOpen ? 'text-provider-openai' : undefined}
+            // The trace panel only renders at lg+; hide its toggle below lg
+            // so it isn't a dead button on tablet / mobile.
+            className={`hidden lg:inline-flex ${traceOpen ? 'text-provider-openai' : ''}`}
           >
             <Activity className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Trace</span>
           </Button>
@@ -429,6 +445,25 @@ export default function App(): JSX.Element {
 
       <SettingsDrawer open={settingsOpen} onOpenChange={setSettingsOpen} />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} actions={actions} />
+
+      {/* Mobile-only history sheet. The desktop LeftRail is hidden below md;
+          this off-canvas drawer keeps case history reachable on phones
+          (adapt.md: never hide core functionality on mobile). */}
+      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
+        <LeftDrawerContent aria-describedby={undefined}>
+          <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+            <HistoryIcon className="h-4 w-4 text-muted" />
+            <DialogTitle className="text-sm font-semibold tracking-tight">History</DialogTitle>
+          </div>
+          <HistoryList
+            expanded
+            onSelect={(rec) => {
+              onSelectHistory(rec);
+              setHistoryOpen(false);
+            }}
+          />
+        </LeftDrawerContent>
+      </Dialog>
     </div>
   );
 }

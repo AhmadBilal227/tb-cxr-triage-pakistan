@@ -81,6 +81,32 @@ export const FullscreenContent = React.forwardRef<
 ));
 FullscreenContent.displayName = 'FullscreenContent';
 
+/** Left-side drawer content (used for the mobile history sheet). */
+export const LeftDrawerContent = React.forwardRef<
+  React.ElementRef<typeof DialogPrimitive.Content>,
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
+>(({ className, children, ...props }, ref) => (
+  <DialogPrimitive.Portal>
+    <Overlay />
+    <DialogPrimitive.Content
+      ref={ref}
+      className={cn(
+        'fixed left-0 top-0 z-50 flex h-full w-72 max-w-[80vw] flex-col',
+        'border-r border-border bg-surface shadow-2xl animate-fade-in',
+        className,
+      )}
+      {...props}
+    >
+      {children}
+      <DialogPrimitive.Close className="absolute right-3 top-3 text-muted hover:text-offwhite">
+        <X className="h-5 w-5" />
+        <span className="sr-only">Close</span>
+      </DialogPrimitive.Close>
+    </DialogPrimitive.Content>
+  </DialogPrimitive.Portal>
+));
+LeftDrawerContent.displayName = 'LeftDrawerContent';
+
 /** Right-side drawer content (used for Settings). */
 export const DrawerContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
