@@ -109,31 +109,57 @@ def _threshold_for_sensitivity(label: np.ndarray, prob: np.ndarray, target: floa
 
 
 def fit_locked_calibration(write: bool = True) -> LockedCalibration:
-    """Fit T + thr@95sens on the calibration slice of the cached LODO OOF.
+    """Lock the DEPLOYED operating point + the frozen eval split.
 
-    The calibration slice is the deterministic 20% stratified split from
-    make_calibration_split(seed=P0_CALIBRATION_SEED). The remaining 80% is
-    the evaluation surface that all subsequent measurement uses unchanged.
+    CORRECTION (2026-05-25): an earlier version re-fit T from scratch (NLL-optimal
+    T=2.85) + a 95%-sens threshold (0.098). That drifted the probability space away
+    from the deployed model's T=1.5915 — and the M26 rule-stack constants
+    (borderline_low=0.20, s_inactive_escalate=0.7126, asymmetric_evidence_thr=0.88)
+    were all derived in the T=1.5915 space. Result: borderline_low (0.20) > thr (0.098),
+    an INVERTED ABSTAIN band that silently disabled the entire M26 safety net
+    (abstain_rate=0.0). Temperature and threshold are coupled (same ROC point), so
+    re-fitting T buys nothing for the decision while breaking the downstream rules.
+
+    The locked protocol therefore locks the DEPLOYED operating point (T + thr read
+    verbatim from data/tb_threshold_t2.json — the validated M22 values that the M26
+    rule stack assumes) PLUS the deterministic seed=7 20/80 eval split. The "locked"
+    property is: frozen split + frozen shipped operating point, never re-tuned per
+    config on the evaluation surface. (Per-site recalibration for NEW deployment
+    sites is a separate flow — P0.5+, not the baseline.)
     """
     data_dir = Path(__file__).parent.parent / 'data'
     oof_path = data_dir / 'image_oof_logits.npz'
     if not oof_path.exists():
         raise FileNotFoundError(f'OOF cache missing: {oof_path}. Run M14 LODO first.')
+    deployed_path = data_dir / 'tb_threshold_t2.json'
+    if not deployed_path.exists():
+        raise FileNotFoundError(f'Deployed calibration missing: {deployed_path}.')
+    deployed = json.loads(deployed_path.read_text())
+    T = float(deployed['temperature'])           # validated deployed T (1.5915)
+    thr = float(deployed['threshold'])            # validated deployed thr (0.6105)
+
     d = np.load(oof_path, allow_pickle=True)
     logit = d['image_logit'].astype('float64')
     label = d['label'].astype('int64')
     source = d['source']
     cal_idx, eval_idx = make_calibration_split(logit, label, source)
-    T = _fit_temperature(logit[cal_idx], label[cal_idx])
-    prob_cal = _sigmoid(logit[cal_idx] / T)
-    thr = _threshold_for_sensitivity(label[cal_idx], prob_cal, target=0.95)
+
+    borderline_low = 0.20  # M26 widened borderline band lower edge (in the T=1.5915 space)
+    # Invariant: the ABSTAIN band [borderline_low, thr) must be non-empty, else the
+    # entire M26 safety net (ABSTAIN routing) is silently dead. This is the exact
+    # bug the 2026-05-25 correction fixes.
+    assert borderline_low < thr, (
+        f'ABSTAIN band inverted: borderline_low={borderline_low} >= thr={thr}. '
+        'The M26 rule stack would never fire ABSTAIN. Lock T+thr to the deployed '
+        'operating point (tb_threshold_t2.json) so the band stays valid.'
+    )
 
     cal = LockedCalibration(
         T=T,
-        thr_at_95sens=thr,
-        borderline_low=0.20,  # M26 widening, locked here
-        s_inactive_escalate=0.7126,  # M19 sequelae escalator, locked here
-        asymmetric_evidence_thr=0.88,  # M26 box-evidence high threshold
+        thr_at_95sens=thr,  # field name retained for schema stability; value is the deployed thr
+        borderline_low=borderline_low,
+        s_inactive_escalate=0.7126,  # M19 sequelae escalator (T=1.5915 space)
+        asymmetric_evidence_thr=0.88,  # M26 box-evidence high threshold (T=1.5915 space)
         seed=P0_CALIBRATION_SEED,
         cal_frac=P0_CAL_FRAC,
         n_cal=int(len(cal_idx)),

@@ -1,177 +1,177 @@
 {
   "meta": {
-    "git_sha": "eb3289a4648858d9b44e488a29a791896b8169df",
-    "locked_T": 2.85,
-    "locked_thr_at_95sens": 0.09791444726225379,
+    "git_sha": "73b9a53ec5bea6d61c5e9bc5d2d1821accf5a63f",
+    "locked_T": 1.5914955557015147,
+    "locked_thr_at_95sens": 0.6104530692100525,
     "locked_borderline_low": 0.2,
-    "measured_at": "2026-05-25T13:01:11Z"
+    "measured_at": "2026-05-25T13:35:15Z"
   },
   "cohen_blind": {
     "images": [
       {
         "filename": "tb_blind_01.jpg",
         "true_label": "TB",
-        "tb_prob": 0.5641574263410866,
+        "tb_prob": 0.6129099273776484,
         "verdict": "TB"
       },
       {
         "filename": "tb_blind_02.jpg",
         "true_label": "TB",
-        "tb_prob": 0.740062791330102,
+        "tb_prob": 0.8641246111603389,
         "verdict": "TB"
       },
       {
         "filename": "tb_blind_03.png",
         "true_label": "TB",
-        "tb_prob": 0.5748455179167823,
+        "tb_prob": 0.6256211488485443,
         "verdict": "TB"
       },
       {
         "filename": "tb_blind_04.jpg",
         "true_label": "TB",
-        "tb_prob": 0.4581970796228941,
-        "verdict": "TB"
+        "tb_prob": 0.4262829598844358,
+        "verdict": "ABSTAIN"
       },
       {
         "filename": "tb_blind_05.jpg",
         "true_label": "TB",
-        "tb_prob": 0.7571990386127126,
+        "tb_prob": 0.8737423466988389,
         "verdict": "TB"
       },
       {
         "filename": "tb_blind_06.png",
         "true_label": "TB",
-        "tb_prob": 0.1389586766404423,
-        "verdict": "TB"
+        "tb_prob": 0.037092740791003644,
+        "verdict": "NO_TB"
       },
       {
         "filename": "tb_blind_07.jpg",
         "true_label": "TB",
-        "tb_prob": 0.07165459548986428,
+        "tb_prob": 0.010204340544056284,
         "verdict": "NO_TB"
       },
       {
         "filename": "tb_blind_08.jpg",
         "true_label": "TB",
-        "tb_prob": 0.8706174686004878,
+        "tb_prob": 0.968105286021647,
         "verdict": "TB"
       },
       {
         "filename": "tb_blind_09.jpeg",
         "true_label": "TB",
-        "tb_prob": 0.04263723261514459,
+        "tb_prob": 0.003908349722316126,
         "verdict": "NO_TB"
       },
       {
         "filename": "tb_blind_10.jpeg",
         "true_label": "TB",
-        "tb_prob": 0.09737297599170458,
+        "tb_prob": 0.01829982091982016,
         "verdict": "NO_TB"
       },
       {
         "filename": "tb_blind_11.jpg",
         "true_label": "TB",
-        "tb_prob": 0.9680910812832642,
+        "tb_prob": 0.9977451953443701,
         "verdict": "TB"
       },
       {
         "filename": "notb_blind_01.png",
         "true_label": "NO_TB",
-        "tb_prob": 0.006743187695377258,
+        "tb_prob": 0.00013703535965904336,
         "verdict": "NO_TB"
       },
       {
         "filename": "notb_blind_02.png",
         "true_label": "NO_TB",
-        "tb_prob": 0.033052627852999714,
+        "tb_prob": 0.0026679522447860997,
         "verdict": "NO_TB"
       },
       {
         "filename": "notb_blind_03.png",
         "true_label": "NO_TB",
-        "tb_prob": 0.004016190417711334,
+        "tb_prob": 5.273232088899998e-05,
         "verdict": "NO_TB"
       },
       {
         "filename": "notb_blind_04.png",
         "true_label": "NO_TB",
-        "tb_prob": 0.00262421898384633,
+        "tb_prob": 2.407262134543736e-05,
         "verdict": "NO_TB"
       },
       {
         "filename": "notb_blind_05.png",
         "true_label": "NO_TB",
-        "tb_prob": 0.005358727865701433,
+        "tb_prob": 8.730828935296024e-05,
         "verdict": "NO_TB"
       },
       {
         "filename": "notb_blind_06.png",
         "true_label": "NO_TB",
-        "tb_prob": 0.0035382920087381003,
+        "tb_prob": 4.293771953196107e-05,
         "verdict": "NO_TB"
       },
       {
         "filename": "notb_blind_07.png",
         "true_label": "NO_TB",
-        "tb_prob": 0.03684828610297828,
+        "tb_prob": 0.0028992721167273965,
         "verdict": "NO_TB"
       },
       {
         "filename": "notb_blind_08.png",
         "true_label": "NO_TB",
-        "tb_prob": 0.15509243767392755,
-        "verdict": "TB"
+        "tb_prob": 0.04617876604516405,
+        "verdict": "NO_TB"
       },
       {
         "filename": "notb_blind_09.png",
         "true_label": "NO_TB",
-        "tb_prob": 0.004251178457070398,
+        "tb_prob": 5.806982904452056e-05,
         "verdict": "NO_TB"
       },
       {
         "filename": "notb_blind_10.png",
         "true_label": "NO_TB",
-        "tb_prob": 0.0242562943731257,
+        "tb_prob": 0.0014160247595021956,
         "verdict": "NO_TB"
       },
       {
         "filename": "notb_blind_11.png",
         "true_label": "NO_TB",
-        "tb_prob": 0.010104018470826523,
+        "tb_prob": 0.00027235265678690905,
         "verdict": "NO_TB"
       },
       {
         "filename": "notb_blind_12.png",
         "true_label": "NO_TB",
-        "tb_prob": 0.003520954446429357,
+        "tb_prob": 4.133471266042967e-05,
         "verdict": "NO_TB"
       }
     ],
-    "strict_sens": 0.7272727272727273,
+    "strict_sens": 0.6,
     "strict_sens_ci": [
-      0.4444444444444444,
-      1.0
+      0.25,
+      0.8464285714285699
     ],
-    "strict_spec": 0.9166666666666666,
-    "effective_sens_with_abstain": 0.7272727272727273,
+    "strict_spec": 1.0,
+    "effective_sens_with_abstain": 0.6363636363636364,
     "tp_fn_fp_tn_abstain": [
-      8,
-      3,
-      1,
-      11,
-      0
+      6,
+      4,
+      0,
+      12,
+      1
     ]
   },
   "lodo_eval_slice": {
     "n_eval": 10473,
-    "strict_sens": 0.9584824624194703,
-    "strict_spec": 0.6454385191714411,
-    "abstain_rate": 0.0,
+    "strict_sens": 0.8458367683429514,
+    "strict_spec": 0.9090800762631077,
+    "abstain_rate": 0.082879786116681,
     "tp_fn_fp_tn": [
-      1339,
-      58,
-      3218,
-      5858
+      1026,
+      187,
+      763,
+      7629
     ]
   },
   "nih_per_finding": {}

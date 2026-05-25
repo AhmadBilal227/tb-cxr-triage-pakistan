@@ -609,9 +609,34 @@ The external blind eval the day before handed me a clean honesty problem. The lo
 
 ---
 
+## Milestone P0 — the locked-protocol baseline, and the bug in my own protocol (2026-05-25)
+
+A GPT steelman of the planned backbone-swap milestone caught that re-fitting calibration per config on the evaluation surface IS test-set leakage. The fix had to be structural, so I built `training/locked_protocol.py`: `make_calibration_split(seed=7, cal_frac=0.20)` deterministically splits the 13,092-row LODO OOF into a 20% calibration slice (n=2,619) and an 80% evaluation slice (n=10,473), stratified by label×source. Plus `training/tta.py` — CXR-safe K=5 test-time augmentation (identity + H-flip + brighten/darken ±0.10 + contrast 1.10; no rotation, no crop) — wired into `TriageEngine` as opt-in `use_tta` + `use_locked_protocol`.
+
+**Then my own locked protocol had a bug, and I nearly shipped it.** The first implementation re-fit the temperature from scratch by NLL on the calibration slice — which landed at T=2.85 — and then took the 95%-sensitivity threshold on those tempered scores, which fell to 0.098. The implementing agent noticed the surprising numbers and wrote an eloquent narrative defending them as "the honest fitted value, reported as-is." That narrative was wrong. Temperature and threshold are *coupled* (they define the same ROC point), so re-fitting T buys nothing for the decision — but it moves the probability space, and the entire M26 rule stack (`borderline_low=0.20`, sequelae escalator `0.7126`, asymmetric-evidence `0.88`) was derived in the *deployed* T=1.5915 space. The result: `borderline_low (0.20) > thr (0.098)` — an **inverted ABSTAIN band**. `abstain_rate` came out 0.0 not because no case was borderline, but because the band was empty. The whole safety net was silently dead, and the LODO eval-slice "spec" had collapsed to 0.645.
+
+I caught it on a session-restart review by sanity-checking the one number that looked off (thr=0.098 vs the deployed 0.6105). The fix: the locked protocol locks the **deployed operating point** — T and thr read verbatim from `tb_threshold_t2.json` (1.5915 / 0.6105, the validated M22 values the M26 stack assumes) — plus the frozen seed=7 split. An assertion (`borderline_low < thr`) now makes the inverted band un-shippable: if anyone re-introduces a from-scratch re-fit that drifts the threshold below the borderline floor, `fit_locked_calibration` raises.
+
+**Corrected frozen baseline** (deployed operating point, K=5 TTA, locked seed=7 eval slice — the reference every P1+ change measures against):
+
+| Metric | Cohen blind (n=23) | LODO 80% eval slice (n=10,473) |
+|--------|---|---|
+| Strict sensitivity | 0.600 [0.25–0.85] | 0.846 |
+| Strict specificity | — | 0.909 |
+| Effective sens (with ABSTAIN rescue) | 0.636 | — |
+| ABSTAIN band | valid [0.20, 0.6105) | valid |
+
+Cohen strict sens 0.600 (TTA) is a real bump over M24's raw 0.455 — the K=5 averaging rescued a couple of borderline cases. The LODO eval slice (0.846 / 0.909) matches the in-distribution expectation, and the ABSTAIN band now fires.
+
+**What I learned.** The steelman protected me from leakage in the *backbone-swap* plan, but the leakage-prevention machinery I built in response had its own subtler bug — a re-fit that silently disabled the safety net by drifting the probability space out from under thresholds that were calibrated elsewhere. The lesson compounds the original one: rigor isn't just "lock the threshold," it's "lock it to the operating point the rest of the system was built around, and add an invariant assertion so the lock can't quietly invert." The cheapest defense was the one number that didn't pass the smell test — 0.098 where 0.61 was expected — and the discipline to stop and check it instead of accepting the agent's confident narrative.
+
+---
+
 ## Maintenance log
 
 *Append a dated, first-person entry after each meaningful milestone: what I set out to do, the key decisions and tradeoffs, the measured result, and what I learned. Keep the honest numbers in.*
+
+- **2026-05-25** — P0 locked-protocol baseline (`feat/p0-locked-protocol`): deterministic seed=7 20/80 split of the LODO OOF + CXR-safe K=5 TTA + opt-in TriageEngine kwargs. Caught + fixed a bug in my own protocol — a from-scratch temperature re-fit (T=2.85) had inverted the M26 ABSTAIN band (`borderline_low 0.20 > thr 0.098`), silently killing the safety net. Fixed by locking the deployed operating point (T=1.5915/thr=0.6105) + a `borderline_low < thr` assertion. Corrected frozen baseline: Cohen strict 0.600 / effective 0.636 (TTA); LODO eval-slice 0.846 sens / 0.909 spec.
 
 - **2026-05-23** — Built the full frontend app (Milestone 1); Lighthouse a11y 100.
 - **2026-05-24** — Live integration + real-data findings (M2); measured 14% baseline sensitivity (M3); VLM improvements → 42% (M4); 90%-path research swarms (M5); calibration core shipped via subagent-driven review gates (M6); started the real-classifier training pipeline, expanded to multi-task best-quality (M7).
