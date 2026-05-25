@@ -185,6 +185,11 @@ class TriageResult:
     """`_detect_inversion(g)`'s heuristic result (suspected MONOCHROME1 polarity). Already
     drives the image_quality warning; surfacing the bool lets the UI render a chip."""
 
+    tta_passes: list[float] | None = None
+    """When `use_tta=True`, the K_PASSES per-augmentation calibrated TB probabilities whose
+    mean IS `tb_prob`. `None` on the single-pass (M22 deployed) path so the default wire
+    shape is unchanged. CXR-safe augs only (identity + hflip + brighten + darken + contrast)."""
+
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "tb_prob": self.tb_prob,
@@ -210,6 +215,8 @@ class TriageResult:
             out["crop_box"] = dict(self.crop_box)
         if self.inversion_detected is not None:
             out["inversion_detected"] = bool(self.inversion_detected)
+        if self.tta_passes is not None:
+            out["tta_passes"] = [float(p) for p in self.tta_passes]
         return out
 
 
@@ -279,7 +286,13 @@ class TriageEngine:
     weights, and the lung segmenter. Calibration constants are read from JSON. Per-run
     latency is sub-second on warm M4."""
 
-    def __init__(self, hf_offline: bool = True) -> None:
+    def __init__(
+        self,
+        hf_offline: bool = True,
+        *,
+        use_tta: bool = False,
+        use_locked_protocol: bool = False,
+    ) -> None:
         # Force the HF cache to be the sole source — no silent network fetches at runtime.
         # Set BEFORE the transformers import path triggers any cache lookup downstream.
         if hf_offline:
@@ -294,6 +307,27 @@ class TriageEngine:
         self.T: float = float(cal_t2["temperature"])
         self.thr_at_95sens: float = float(cal_t2["threshold"])
         self.T_sequelae: float = float(cal_seq["temperature"])
+
+        # --- P0 opt-in levers (default OFF → M22 deployed behavior byte-for-byte) ---
+        # use_tta: K=5 CXR-safe test-time augmentation, probabilities averaged.
+        # use_locked_protocol: T + decision threshold come from the pre-registered
+        #   data/p0_locked_calibration.json instead of the deployed tb_threshold_t2.json.
+        #   This is the structural defense against per-config calibration leakage: every
+        #   P1/P2/P3 evaluation loads the SAME locked T+thr and never re-fits them.
+        self.use_tta: bool = use_tta
+        if use_locked_protocol:
+            from locked_protocol import load_locked_calibration
+
+            locked = load_locked_calibration()
+            self.T = float(locked.T)
+            self.thr_at_95sens = float(locked.thr_at_95sens)
+            # `thr` is the canonical name the locked-protocol tests + measurement read.
+            self.thr: float = float(locked.thr_at_95sens)
+            self._calibration_source = "p0_locked"
+        else:
+            self.thr = self.thr_at_95sens
+            self._calibration_source = "tb_threshold_t2_json"
+
         # Mirror the borderline_high to the calibrated threshold so the rule and the
         # decided_at_threshold are one consistent number.
         self.borderline_high: float = self.thr_at_95sens
@@ -420,6 +454,27 @@ class TriageEngine:
         s_inactive = _platt_sigmoid(logit_seq, self.T_sequelae)
         latency["heads"] = int((time.perf_counter() - t0) * 1000)
 
+        # --- 5a. P0 test-time augmentation (opt-in) ---
+        # The single-pass `tb_prob` above IS the identity pass. When use_tta is on we
+        # apply the K-1 remaining CXR-safe augmentations to the SEG-CROPPED, normalized
+        # crop tensor (not raw PIL), re-run Rad-DINO + the t2 head per variant, and average
+        # the calibrated probabilities. The verdict logit / enrichment fields stay pinned to
+        # the identity forward (M24 invariant); only `tb_prob` becomes the averaged value.
+        tta_probs: list[float] | None = None
+        if self.use_tta:
+            from tta import tta_passes, tta_average_probs
+
+            base_chw = self._pil_to_chw01(crop_img_pil)
+            tta_probs = []
+            for i, variant in enumerate(tta_passes(base_chw)):
+                if i == 0:
+                    # identity pass — reuse the already-computed verdict probability
+                    tta_probs.append(float(tb_prob))
+                    continue
+                aug_pil = self._chw01_to_pil(variant)
+                tta_probs.append(self._t2_prob_for_crop(aug_pil, txrv_t))
+            tb_prob = tta_average_probs(tta_probs)
+
         # --- 5b. M24 enrichment forward (zonal_scores only) — SEPARATE from the verdict forward.
         # If a real zone matrix can be built from the lung+hilus masks, run TBHeadT2 again on the
         # SAME features but with real zones, and capture `zone_logits` to report per-zone
@@ -501,6 +556,7 @@ class TriageEngine:
             txrv_pathologies=txrv_pathologies,
             crop_box=crop_box,
             inversion_detected=inversion,
+            tta_passes=tta_probs,
         )
 
     # ----------------------------------------------------------------------
@@ -591,6 +647,40 @@ class TriageEngine:
             lung_crop_lb,
             hilus_crop_lb,
         )
+
+    # ----------------------------------------------------------------------
+    # P0 TTA internals — augmentations applied to the NORMALIZED seg-cropped
+    # tensor (not raw PIL): harmonize+seg run ONCE, then the K CXR-safe variants
+    # diverge only at the Rad-DINO input. The identity pass is bit-identical to
+    # the single-pass path, so `tta_passes[0]` equals the non-TTA tb_prob.
+    # ----------------------------------------------------------------------
+    @staticmethod
+    def _pil_to_chw01(img: Image.Image) -> torch.Tensor:
+        """RGB PIL → CHW float tensor in [0, 1] (the alphabet tta.tta_passes expects)."""
+        arr = np.asarray(img, dtype=np.float32) / 255.0  # HWC in [0,1]
+        return torch.from_numpy(arr).permute(2, 0, 1).contiguous()  # CHW
+
+    @staticmethod
+    def _chw01_to_pil(t: torch.Tensor) -> Image.Image:
+        """CHW float tensor in [0, 1] → RGB PIL uint8."""
+        arr = (t.clamp(0.0, 1.0).permute(1, 2, 0).cpu().numpy() * 255.0).round().astype("uint8")
+        return Image.fromarray(arr)
+
+    def _t2_prob_for_crop(self, crop_img_pil: Image.Image, txrv_t: torch.Tensor) -> float:
+        """Calibrated TB probability for ONE crop variant (zero-zones convention).
+
+        Mirrors the verdict forward exactly: Rad-DINO → TBHeadT2 with all-zero zone
+        matrix → sigmoid(logit / T). Used per TTA pass. txrv_t is shared across passes
+        (TXRV runs on the harmonized frame, which TTA does not alter)."""
+        cls_arr, patches_arr = self._rad_forward(crop_img_pil)
+        cls_t = torch.tensor(cls_arr[None, ...], dtype=torch.float32, device=DEVICE)
+        patches_t = torch.tensor(patches_arr[None, ...], dtype=torch.float32, device=DEVICE)
+        zones_zero = torch.zeros(1, PATCH_GRID * PATCH_GRID, 7, dtype=torch.float32, device=DEVICE)
+        self.head_t2._zones = zones_zero
+        with torch.no_grad():
+            out_t2 = self.head_t2(cls_t, patches_t, txrv_t)
+            logit_t2 = float(out_t2["logit"].cpu().numpy()[0])
+        return _platt_sigmoid(logit_t2, self.T)
 
     def _rad_forward(self, img: Image.Image) -> tuple[np.ndarray, np.ndarray]:
         """Rad-DINO pooler_output (CLS, [768]) + patch tokens pooled 37x37 -> 8x8 ([64, 768] fp32).
