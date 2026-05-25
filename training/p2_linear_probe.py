@@ -51,7 +51,16 @@ GATE_MARGIN = 0.05         # "materially higher" = >= +0.05 over the deployed ce
 PAUC_FPR_MAX = 0.20        # high-specificity region (spec >= 0.80)
 SENS_AT_SPEC = 0.70        # report sensitivity at this specificity
 
+# Pre-registered gate branches (CLS / TXRV / fused — the deployed head's NON-spatial inputs).
 BRANCHES = ("cls", "txrv", "fused")
+
+# POST-HOC diagnostic branches (NOT in the pre-registered P2.0 gate). Added after the gate branches
+# collapsed externally, to test whether the rad-dino external signal lives in the SPATIAL patch
+# tokens (which the head pools via zonal-soft-OR and the CLS probe discards). patch-MAX is a
+# nonlinear MIL/OR-style readout — closer to the deployed head's signal path than a CLS probe. These
+# are HYPOTHESIS-GENERATING (they consult the Pakistani set), reported separately, and do NOT change
+# the literal gate decision; they DO qualify its interpretation. See the CASE_STUDY P2 entry.
+DIAG_BRANCHES = ("patch_mean", "patch_max", "cls_patchmax_txrv")
 
 
 def _feature_matrix(d, branch: str) -> np.ndarray:
@@ -63,6 +72,16 @@ def _feature_matrix(d, branch: str) -> np.ndarray:
         return txrv
     if branch == "fused":
         return np.concatenate([cls, txrv], axis=1)
+    # ---- post-hoc patch-token diagnostics ----
+    if branch in ("patch_mean", "patch_max", "cls_patchmax_txrv"):
+        patches = d["patches"].astype("float64")  # [N, 64, 768]
+        patch_mean = patches.mean(axis=1)
+        patch_max = patches.max(axis=1)
+        if branch == "patch_mean":
+            return patch_mean
+        if branch == "patch_max":
+            return patch_max
+        return np.concatenate([cls, patch_max, txrv], axis=1)
     raise ValueError(f"unknown branch {branch}")
 
 
@@ -208,34 +227,56 @@ def main() -> None:
             "n_probe_train_cal": int(len(train_rows_orig)),
             "n_lodo_eval": int(len(eval_idx)),
             "n_pakistani": int(len(y_pk)),
+            "lodo_eval_caveat": (
+                "The 'lodo_eval' slice here is a SAME-SITE seed=7 holdout (both the probe-train cal "
+                "slice and this eval slice contain all 4 sources), NOT true leave-one-DATASET-out. "
+                "Its near-perfect AUROC (~0.99) is an IN-DISTRIBUTION reference only and must NOT be "
+                "compared against the deployed head's true-LODO 0.923 (held-out SITE). The honest "
+                "external number is 'pakistani'."
+            ),
         },
         "branches": {},
     }
 
-    # full feature matrices (built once)
-    Xtr_orig = {b: _feature_matrix(dtr, b)[orig_mask] for b in BRANCHES}
-    Xpk = {b: _feature_matrix(dpk, b) for b in BRANCHES}
-
-    for b in BRANCHES:
-        print(f"===== BRANCH {b} =====")
-        scaler = StandardScaler().fit(Xtr_orig[b][train_rows_orig])
+    def _run_branch(b: str) -> dict:
+        Xtr = _feature_matrix(dtr, b)[orig_mask]
+        Xpk_b = _feature_matrix(dpk, b)
+        scaler = StandardScaler().fit(Xtr[train_rows_orig])
         clf = LogisticRegression(
             C=args.C, max_iter=5000, class_weight="balanced", solver="lbfgs")
-        clf.fit(scaler.transform(Xtr_orig[b][train_rows_orig]), y_orig[train_rows_orig])
-
+        clf.fit(scaler.transform(Xtr[train_rows_orig]), y_orig[train_rows_orig])
         # LODO eval slice (in-distribution reference) — held out from probe training
-        s_lodo = clf.decision_function(scaler.transform(Xtr_orig[b][eval_idx]))
+        s_lodo = clf.decision_function(scaler.transform(Xtr[eval_idx]))
         lodo = _patient_bootstrap(y_orig[eval_idx], s_lodo, groups_orig[eval_idx], seed=7)
-
         # held-out Pakistani (external, never seen in probe training)
-        s_pk = clf.decision_function(scaler.transform(Xpk[b]))
+        s_pk = clf.decision_function(scaler.transform(Xpk_b))
         pk = _patient_bootstrap(y_pk, s_pk, groups_pk, seed=11)
-
-        results["branches"][b] = {"pakistani": pk, "lodo_eval": lodo}
         print(f"  PAKISTANI: AUROC={pk['auroc']:.3f} {pk['auroc_ci']} "
               f"pAUC(FPR<=.2)={pk['pauc_fpr20']:.3f} sens@spec.70={pk['sens_at_spec70']:.3f}")
         print(f"  LODO-EVAL: AUROC={lodo['auroc']:.3f} {lodo['auroc_ci']} "
               f"pAUC(FPR<=.2)={lodo['pauc_fpr20']:.3f} sens@spec.70={lodo['sens_at_spec70']:.3f}\n")
+        return {"pakistani": pk, "lodo_eval": lodo}
+
+    for b in BRANCHES:
+        print(f"===== GATE BRANCH {b} =====")
+        results["branches"][b] = _run_branch(b)
+
+    # ---- POST-HOC patch-token diagnostics (NOT part of the pre-registered gate) ----
+    results["diagnostics_posthoc"] = {
+        "note": (
+            "These branches were added AFTER the gate branches collapsed externally, to test "
+            "whether rad-dino's external signal lives in the SPATIAL patch tokens (the head pools "
+            "them via zonal-soft-OR; the CLS probe discards them). patch-MAX is a nonlinear MIL/OR "
+            "readout, closer to the deployed head's signal path. They CONSULT the Pakistani set, so "
+            "they are HYPOTHESIS-GENERATING and DO NOT change the literal gate decision; they "
+            "qualify its interpretation (the CLS gate is a misspecified discriminator for an "
+            "OR-pooling head)."
+        ),
+        "branches": {},
+    }
+    for b in DIAG_BRANCHES:
+        print(f"===== DIAGNOSTIC BRANCH {b} (post-hoc) =====")
+        results["diagnostics_posthoc"]["branches"][b] = _run_branch(b)
 
     # ---- evaluate the gate ----
     cls_pk = results["branches"]["cls"]["pakistani"]
@@ -261,6 +302,34 @@ def main() -> None:
             "Not materially higher: the rad-dino representation caps near the deployed "
             "external ceiling -> backbone is a candidate lever -> PROCEED to P2.1."
         )
+    # ---- interpretation caveat: is the CLS/fused gate a VALID discriminator? ----
+    # The deployed head's signal path is the SPATIAL patch tokens under zonal-soft-OR (an OR/max
+    # readout), NOT the CLS token. If a patch-MAX probe reaches >= the deployed external AUROC while
+    # CLS/fused collapse, the gate branches under-read the backbone -> the literal PROCEED is on a
+    # misspecified discriminator, and the honest label is INCONCLUSIVE (lever is plausibly the
+    # POOLING/head, not the backbone family). Flag this for the coordinator.
+    pmax_pk = results["diagnostics_posthoc"]["branches"]["patch_max"]["pakistani"]
+    gate_branches_collapsed = best_auroc < DEPLOYED_PK_AUROC - GATE_MARGIN
+    patchmax_recovers = pmax_pk["auroc"] >= DEPLOYED_PK_AUROC
+    gate_valid = not (gate_branches_collapsed and patchmax_recovers)
+    interp = (
+        f"patch_max PK AUROC={pmax_pk['auroc']:.3f} {pmax_pk['auroc_ci']}. "
+    )
+    if not gate_valid:
+        interp += (
+            "GATE MISSPECIFIED: the CLS/fused gate branches collapsed externally "
+            f"(best {best_auroc:.3f} << deployed {DEPLOYED_PK_AUROC}) while a patch-MAX (OR-style) "
+            f"probe recovers >= the deployed external AUROC ({pmax_pk['auroc']:.3f}). The deployed "
+            "head ALREADY pools patch tokens via soft-OR, so the CLS probe is the wrong "
+            "discriminator. The literal PROCEED rests on a misspecified probe; the honest label is "
+            "INCONCLUSIVE. The rad-dino representation DOES hold ~deployed-level external signal in "
+            "its spatial tokens -> the lever is plausibly POOLING/head/training, not the backbone "
+            "FAMILY. maira-2 (same DINO family) is therefore LOWER-priority than head/pooling work. "
+            "Surface to the coordinator before extracting maira-2."
+        )
+    else:
+        interp += "Gate branches are a valid discriminator for this head; no misspecification flag."
+
     results["gate_p2_0"] = {
         "decision": decision,
         "best_branch": best_branch,
@@ -270,10 +339,15 @@ def main() -> None:
         "margin": GATE_MARGIN,
         "materially_higher": bool(materially_higher),
         "reasoning": reasoning,
+        "gate_valid_discriminator": bool(gate_valid),
+        "interpretation_caveat": interp,
+        "honest_label": "PROCEED" if gate_valid else "INCONCLUSIVE (gate misspecified)",
     }
     print("=" * 70)
-    print(f"GATE P2.0: {decision}")
+    print(f"GATE P2.0 (literal): {decision}")
     print(f"  {reasoning}")
+    print(f"GATE P2.0 (honest):  {results['gate_p2_0']['honest_label']}")
+    print(f"  {interp}")
     print("=" * 70)
 
     Path(args.output).write_text(json.dumps(results, indent=2))

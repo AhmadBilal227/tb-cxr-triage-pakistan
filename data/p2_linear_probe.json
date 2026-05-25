@@ -1,0 +1,299 @@
+{
+  "meta": {
+    "deployed_pk_auroc": 0.781,
+    "gate_margin": 0.05,
+    "pauc_fpr_max": 0.2,
+    "sens_at_spec": 0.7,
+    "probe": "LogisticRegression(L2, C=1.0, standardized)",
+    "bootstrap_n": 2000,
+    "n_train_corpus_orig": 13092,
+    "n_probe_train_cal": 2619,
+    "n_lodo_eval": 10473,
+    "n_pakistani": 3008,
+    "lodo_eval_caveat": "The 'lodo_eval' slice here is a SAME-SITE seed=7 holdout (both the probe-train cal slice and this eval slice contain all 4 sources), NOT true leave-one-DATASET-out. Its near-perfect AUROC (~0.99) is an IN-DISTRIBUTION reference only and must NOT be compared against the deployed head's true-LODO 0.923 (held-out SITE). The honest external number is 'pakistani'."
+  },
+  "branches": {
+    "cls": {
+      "pakistani": {
+        "auroc": 0.6044561422121262,
+        "auroc_ci": [
+          0.5816907981907395,
+          0.6271508296811605
+        ],
+        "pauc_fpr20": 0.6021896563858752,
+        "pauc_fpr20_ci": [
+          0.5848995696979838,
+          0.6197425441065131
+        ],
+        "sens_at_spec70": 0.48757016840417,
+        "sens_at_spec70_ci": [
+          0.45585784097732973,
+          0.5244993146237645
+        ],
+        "n": 3008,
+        "n_pos": 2494,
+        "n_neg": 514,
+        "n_patients": 3008
+      },
+      "lodo_eval": {
+        "auroc": 0.9863743468422069,
+        "auroc_ci": [
+          0.9833456147642983,
+          0.98912548528556
+        ],
+        "pauc_fpr20": 0.970233685431334,
+        "pauc_fpr20_ci": [
+          0.9650587831380542,
+          0.9749649820967997
+        ],
+        "sens_at_spec70": 0.9899785254115963,
+        "sens_at_spec70_ci": [
+          0.984891542097734,
+          0.9949821687155312
+        ],
+        "n": 10473,
+        "n_pos": 1397,
+        "n_neg": 9076,
+        "n_patients": 10473
+      }
+    },
+    "txrv": {
+      "pakistani": {
+        "auroc": 0.5992085284839257,
+        "auroc_ci": [
+          0.5706050935410255,
+          0.6275084376930182
+        ],
+        "pauc_fpr20": 0.512500559058992,
+        "pauc_fpr20_ci": [
+          0.49706390216392266,
+          0.5302913664468575
+        ],
+        "sens_at_spec70": 0.41419406575781875,
+        "sens_at_spec70_ci": [
+          0.36334002746668287,
+          0.48122992875279547
+        ],
+        "n": 3008,
+        "n_pos": 2494,
+        "n_neg": 514,
+        "n_patients": 3008
+      },
+      "lodo_eval": {
+        "auroc": 0.9575610300104771,
+        "auroc_ci": [
+          0.9511131114664807,
+          0.9631397249562795
+        ],
+        "pauc_fpr20": 0.9167064870026389,
+        "pauc_fpr20_ci": [
+          0.907726617494941,
+          0.9256158342753519
+        ],
+        "sens_at_spec70": 0.964924838940587,
+        "sens_at_spec70_ci": [
+          0.9543794077132532,
+          0.9743073472716488
+        ],
+        "n": 10473,
+        "n_pos": 1397,
+        "n_neg": 9076,
+        "n_patients": 10473
+      }
+    },
+    "fused": {
+      "pakistani": {
+        "auroc": 0.6045076276448691,
+        "auroc_ci": [
+          0.5804252155139408,
+          0.6302112006916141
+        ],
+        "pauc_fpr20": 0.5614069529950133,
+        "pauc_fpr20_ci": [
+          0.5414326868985381,
+          0.5809249488401541
+        ],
+        "sens_at_spec70": 0.4603047313552526,
+        "sens_at_spec70_ci": [
+          0.4092542433238554,
+          0.5102167405042726
+        ],
+        "n": 3008,
+        "n_pos": 2494,
+        "n_neg": 514,
+        "n_patients": 3008
+      },
+      "lodo_eval": {
+        "auroc": 0.9909124192021372,
+        "auroc_ci": [
+          0.9884005300258603,
+          0.9931374105464151
+        ],
+        "pauc_fpr20": 0.979255261218074,
+        "pauc_fpr20_ci": [
+          0.975208552951623,
+          0.9834142178442045
+        ],
+        "sens_at_spec70": 0.9942734430923408,
+        "sens_at_spec70_ci": [
+          0.9900049794731625,
+          0.9978480351932661
+        ],
+        "n": 10473,
+        "n_pos": 1397,
+        "n_neg": 9076,
+        "n_patients": 10473
+      }
+    }
+  },
+  "diagnostics_posthoc": {
+    "note": "These branches were added AFTER the gate branches collapsed externally, to test whether rad-dino's external signal lives in the SPATIAL patch tokens (the head pools them via zonal-soft-OR; the CLS probe discards them). patch-MAX is a nonlinear MIL/OR readout, closer to the deployed head's signal path. They CONSULT the Pakistani set, so they are HYPOTHESIS-GENERATING and DO NOT change the literal gate decision; they qualify its interpretation (the CLS gate is a misspecified discriminator for an OR-pooling head).",
+    "branches": {
+      "patch_mean": {
+        "pakistani": {
+          "auroc": 0.5932135958986393,
+          "auroc_ci": [
+            0.5721062234769694,
+            0.6140092280552043
+          ],
+          "pauc_fpr20": 0.6351607021572916,
+          "pauc_fpr20_ci": [
+            0.6189868424890512,
+            0.6510163446960999
+          ],
+          "sens_at_spec70": 0.5020048115477145,
+          "sens_at_spec70_ci": [
+            0.46695700708155946,
+            0.5266420979477233
+          ],
+          "n": 3008,
+          "n_pos": 2494,
+          "n_neg": 514,
+          "n_patients": 3008
+        },
+        "lodo_eval": {
+          "auroc": 0.9904043418608093,
+          "auroc_ci": [
+            0.9875194200712796,
+            0.9929804451345764
+          ],
+          "pauc_fpr20": 0.980208048636334,
+          "pauc_fpr20_ci": [
+            0.9760288538641554,
+            0.9841965120324646
+          ],
+          "sens_at_spec70": 0.9935576234788833,
+          "sens_at_spec70_ci": [
+            0.9892376545641519,
+            0.9971591413155688
+          ],
+          "n": 10473,
+          "n_pos": 1397,
+          "n_neg": 9076,
+          "n_patients": 10473
+        }
+      },
+      "patch_max": {
+        "pakistani": {
+          "auroc": 0.8534888401424119,
+          "auroc_ci": [
+            0.8384204128483439,
+            0.8680896059805335
+          ],
+          "pauc_fpr20": 0.7948366178265798,
+          "pauc_fpr20_ci": [
+            0.7735203038496752,
+            0.8166864326157149
+          ],
+          "sens_at_spec70": 0.826383319967923,
+          "sens_at_spec70_ci": [
+            0.8040657203909968,
+            0.8509531076920074
+          ],
+          "n": 3008,
+          "n_pos": 2494,
+          "n_neg": 514,
+          "n_patients": 3008
+        },
+        "lodo_eval": {
+          "auroc": 0.9810086967824082,
+          "auroc_ci": [
+            0.9774889814240949,
+            0.9843780832510777
+          ],
+          "pauc_fpr20": 0.9576520278909205,
+          "pauc_fpr20_ci": [
+            0.9516489525629764,
+            0.9636958396478227
+          ],
+          "sens_at_spec70": 0.9892627057981389,
+          "sens_at_spec70_ci": [
+            0.9837685250529288,
+            0.9943021969337759
+          ],
+          "n": 10473,
+          "n_pos": 1397,
+          "n_neg": 9076,
+          "n_patients": 10473
+        }
+      },
+      "cls_patchmax_txrv": {
+        "pakistani": {
+          "auroc": 0.6330445988660723,
+          "auroc_ci": [
+            0.6098306264745038,
+            0.6587338165879002
+          ],
+          "pauc_fpr20": 0.5762315506198881,
+          "pauc_fpr20_ci": [
+            0.5562361789878455,
+            0.598616075021359
+          ],
+          "sens_at_spec70": 0.5208500400962309,
+          "sens_at_spec70_ci": [
+            0.4751398871157008,
+            0.5532781125838262
+          ],
+          "n": 3008,
+          "n_pos": 2494,
+          "n_neg": 514,
+          "n_patients": 3008
+        },
+        "lodo_eval": {
+          "auroc": 0.9943822041376204,
+          "auroc_ci": [
+            0.9926025997783043,
+            0.9958834017091578
+          ],
+          "pauc_fpr20": 0.9865184852414304,
+          "pauc_fpr20_ci": [
+            0.9833490941517826,
+            0.9895283686346555
+          ],
+          "sens_at_spec70": 0.9985683607730852,
+          "sens_at_spec70_ci": [
+            0.9963872179311959,
+            1.0
+          ],
+          "n": 10473,
+          "n_pos": 1397,
+          "n_neg": 9076,
+          "n_patients": 10473
+        }
+      }
+    }
+  },
+  "gate_p2_0": {
+    "decision": "PROCEED",
+    "best_branch": "fused",
+    "best_pk_auroc": 0.6045076276448691,
+    "best_pk_auroc_ci_lo": 0.5804252155139408,
+    "deployed_ceiling": 0.781,
+    "margin": 0.05,
+    "materially_higher": false,
+    "reasoning": "best probe PK AUROC=0.605 (branch=fused, CI_lo=0.580) vs deployed ceiling 0.781. Not materially higher: the rad-dino representation caps near the deployed external ceiling -> backbone is a candidate lever -> PROCEED to P2.1.",
+    "gate_valid_discriminator": false,
+    "interpretation_caveat": "patch_max PK AUROC=0.853 [0.8384204128483439, 0.8680896059805335]. GATE MISSPECIFIED: the CLS/fused gate branches collapsed externally (best 0.605 << deployed 0.781) while a patch-MAX (OR-style) probe recovers >= the deployed external AUROC (0.853). The deployed head ALREADY pools patch tokens via soft-OR, so the CLS probe is the wrong discriminator. The literal PROCEED rests on a misspecified probe; the honest label is INCONCLUSIVE. The rad-dino representation DOES hold ~deployed-level external signal in its spatial tokens -> the lever is plausibly POOLING/head/training, not the backbone FAMILY. maira-2 (same DINO family) is therefore LOWER-priority than head/pooling work. Surface to the coordinator before extracting maira-2.",
+    "honest_label": "INCONCLUSIVE (gate misspecified)"
+  }
+}
