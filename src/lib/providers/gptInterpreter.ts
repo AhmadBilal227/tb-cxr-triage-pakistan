@@ -36,8 +36,12 @@ import type { LocalTriageResult } from './localTriage';
 // Schema versioning — bump when prompt or schema changes meaningfully.
 // v1 (M24 original): finding/key_regions/confidence_qualifier/differential.
 // v2 (M24 rewrite):  RSNA-style technique/findings/impression/recommendation.
+// v3 (unified):      adds a leading `headline` summary + folds the former
+//                    secondary-observations stage (image_quality,
+//                    support_devices, incidental_findings) into ONE report
+//                    from ONE call. The separate gptSecondary provider is gone.
 // ---------------------------------------------------------------------------
-export const GPT_INTERPRETER_SCHEMA_VERSION = 'gpt-interpreter-v2' as const;
+export const GPT_INTERPRETER_SCHEMA_VERSION = 'gpt-interpreter-v3' as const;
 
 export type ImpressionLikelihood = 'primary' | 'consider' | 'less_likely';
 
@@ -66,15 +70,26 @@ export interface FindingsSections {
  * Impression, Recommendation).
  */
 export interface ClinicianReport {
+  /**
+   * One-sentence summary of the verdict + chief radiographic finding. The
+   * report's heading. Verdict-anchored (must agree with the pipeline verdict).
+   */
+  headline: string;
   /** Single short sentence describing how the image was acquired and read. */
   technique: string;
   /** "No prior studies available for comparison." unless told otherwise. */
   comparison: string;
+  /** One line on projection / rotation / exposure adequacy (folded-in secondary obs). */
+  image_quality: string;
   findings: FindingsSections;
   /** Numbered list ranked by clinical significance. First item is verdict-anchored. */
   impression: ImpressionItem[];
   /** 1-2 sentences, actionable next step. */
   recommendation: string;
+  /** Lines / tubes / leads / hardware visible. Empty when none (folded-in secondary obs). */
+  support_devices: string[];
+  /** Non-TB incidental findings (fractures, masses, prior surgery). Empty when none. */
+  incidental_findings: string[];
   /** Zone keys the report referenced. MUST be a subset of the supplied zonal vocabulary. */
   key_regions: string[];
   /** Always includes the standard single-view + radiographic-vs-microbiological caveats. */
@@ -93,8 +108,10 @@ export const GPT_INTERPRETER_SCHEMA: JsonSchemaFormat = {
     type: 'object',
     additionalProperties: false,
     properties: {
+      headline: { type: 'string' },
       technique: { type: 'string' },
       comparison: { type: 'string' },
+      image_quality: { type: 'string' },
       findings: {
         type: 'object',
         additionalProperties: false,
@@ -119,15 +136,21 @@ export const GPT_INTERPRETER_SCHEMA: JsonSchemaFormat = {
         },
       },
       recommendation: { type: 'string' },
+      support_devices: { type: 'array', items: { type: 'string' } },
+      incidental_findings: { type: 'array', items: { type: 'string' } },
       key_regions: { type: 'array', items: { type: 'string' } },
       limitations: { type: 'array', items: { type: 'string' } },
     },
     required: [
+      'headline',
       'technique',
       'comparison',
+      'image_quality',
       'findings',
       'impression',
       'recommendation',
+      'support_devices',
+      'incidental_findings',
       'key_regions',
       'limitations',
     ],
@@ -155,9 +178,9 @@ export const GPT_INTERPRETER_SCHEMA: JsonSchemaFormat = {
  * terminology + MAIRA / MAIRA-Seg literature on hallucination suppression
  * via spatial / feature constraint.
  *
- * Schema version stays at v2 (response shape unchanged); the prompt_hash on
- * the audit envelope changes automatically with the prompt text, so any
- * downstream join on prompt_hash will see the bump.
+ * v3 (unified) adds a leading headline + folds the former secondary-
+ * observations stage (image quality, support devices, incidental findings)
+ * into this single call, so the report is one document from one request.
  */
 export const GPT_INTERPRETER_PROMPT = [
   'You are a board-certified radiologist drafting a structured chest radiograph report for a pulmonologist or radiology colleague. The image is a single frontal chest X-ray. An AI screening pipeline has already run on this image and is handing you its structured output as context. Your role is to describe radiographic findings in clinical-radiology language and add radiologist-level context the trained head cannot measure. You DO NOT diagnose, disagree with, or contradict the pipeline\'s verdict.',
@@ -190,6 +213,10 @@ export const GPT_INTERPRETER_PROMPT = [
   '- Inactive / healed TB: dense calcified granulomas, apical fibrocicatricial scarring, upper-lobe volume loss, pleural thickening — these are radiographically SIMILAR to active TB but are NOT contagious and do NOT need treatment. The pipeline\'s sequelae head exists specifically to flag this distinction.',
   '- TB radiographic mimics worth keeping in the differential when the pattern is non-classical: granulomatous lung disease (sarcoidosis), non-tuberculous mycobacterial infection, fungal infection (histoplasmosis, coccidioidomycosis), organizing pneumonia, malignancy (cavitary lung cancer is the single most important differential for a cavitary upper-lobe lesion in an older patient), septic emboli.',
   '',
+  'HEADLINE (the report heading; ONE sentence, plain clinical language). Summarize the verdict and the single most important radiographic finding. Verdict-anchored: "no_tb" leads with the negative ("No radiographic evidence of active pulmonary tuberculosis"); "tb" leads with the concern ("Radiographic findings concerning for active pulmonary tuberculosis"); "abstain" leads with the equivocation ("Equivocal chest radiograph; expert second read advised"). Append the chief non-TB finding when notable (e.g. ", with mild cardiomegaly").',
+  '',
+  'IMAGE QUALITY (ONE sentence). Projection (AP / PA), rotation, exposure, lung-field inclusion. If adequate: "Adequate single frontal projection." Note only genuine limitations.',
+  '',
   'FINDINGS (populate all four sub-sections, each 1-3 sentences; describe pattern, distribution, and SEVERITY grading where appropriate: mild / moderate / extensive)',
   '- lungs_and_airways: the primary signal. Describe parenchymal pattern (consolidation, cavitation, nodular, miliary, reticular, ground-glass), distribution (apical / posterior / diffuse), severity, and any TB-classical or non-classical features.',
   '- pleura: pleural effusion, pleural thickening, pneumothorax — only when flagged. Otherwise: "The pleural spaces are clear."',
@@ -207,6 +234,10 @@ export const GPT_INTERPRETER_PROMPT = [
   '- For "tb": recommend sputum AFB smear, culture, and NAAT. If cavitation, nodules, or lymphadenopathy are described, additionally recommend lateral view and CT chest for further characterization.',
   '- For "no_tb": no further radiographic workup is indicated based on this exam alone. Test symptomatic or high-risk patients per WHO TB screening algorithm regardless. If prior films exist, comparison is helpful.',
   '- For "abstain": expert radiologist second-read; lateral view and CT chest for further characterization; clinical correlation; sputum testing if symptomatic or high-risk.',
+  '',
+  'SUPPORT DEVICES (array; non-TB side information the TB head ignores by design). Tubes, lines, leads, pacemakers, surgical clips, prosthetic hardware, with position when visible. Empty array when none. This is the highest-hallucination-risk field: PREFER WRONG-BY-OMISSION OVER INVENTION — list only what you can clearly identify.',
+  '',
+  'INCIDENTAL FINDINGS (array; NON-TB findings only). Fractures, mass lesions, post-surgical change, dense calcifications, abnormal gas patterns, foreign bodies. Do NOT put TB-suggestive findings here (those belong in FINDINGS / IMPRESSION). Empty array when none. Same conservative posture: omit rather than invent.',
   '',
   'LIMITATIONS (array of short caveats). Always include all three:',
   '- "Single-view frontal radiograph; lateral and CT may yield additional characterization."',
@@ -253,6 +284,10 @@ export const GPT_INTERPRETER_SCHEMA_HASH = fnv1aHex(JSON.stringify(GPT_INTERPRET
 // ---------------------------------------------------------------------------
 function isStringArray(v: unknown): v is string[] {
   return Array.isArray(v) && v.every((x) => typeof x === 'string');
+}
+
+function clampStringArray(v: unknown): string[] {
+  return isStringArray(v) ? v.filter((s) => s.length > 0).slice(0, 20) : [];
 }
 
 const LIKELIHOOD_VALUES: readonly ImpressionLikelihood[] = ['primary', 'consider', 'less_likely'];
@@ -323,14 +358,18 @@ function validateAndNormalizeReport(raw: unknown, allowedZones: readonly string[
     ? r.key_regions.filter((z) => allowed.has(z))
     : [];
   return {
+    headline: clipString(r.headline, 'Chest radiograph reviewed; see impression below.'),
     technique: clipString(
       r.technique,
       'Single frontal chest radiograph; AI-assisted TB triage pipeline.',
     ),
     comparison: clipString(r.comparison, 'No prior studies available for comparison.'),
+    image_quality: clipString(r.image_quality, 'Adequate single frontal projection.'),
     findings: normalizeFindings(r.findings),
     impression: normalizeImpression(r.impression),
     recommendation: clipString(r.recommendation, '(no recommendation returned)'),
+    support_devices: clampStringArray(r.support_devices),
+    incidental_findings: clampStringArray(r.incidental_findings),
     key_regions,
     limitations: normalizeLimitations(r.limitations),
   };

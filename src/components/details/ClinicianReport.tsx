@@ -341,8 +341,15 @@ export function ClinicianReportReadyView({
         className="space-y-3 rounded-md border border-border bg-surface-2 p-3 text-[12px] leading-relaxed text-offwhite/90"
         data-testid="clinician-report-body"
       >
+        {/* LLM-generated heading: verdict + chief finding in one line. */}
+        <div className="border-b border-border pb-3" data-testid="clinician-report-headline">
+          <div className="font-mono text-[10px] uppercase tracking-wide text-muted">Summary</div>
+          <p className="mt-1 text-sm font-medium leading-snug text-offwhite">{r.headline}</p>
+        </div>
+
         <ReportSection label="Technique">{r.technique}</ReportSection>
         <ReportSection label="Comparison">{r.comparison}</ReportSection>
+        <ReportSection label="Image quality">{r.image_quality}</ReportSection>
 
         <div className="space-y-1.5" data-testid="clinician-report-findings">
           <SectionLabel>Findings</SectionLabel>
@@ -373,6 +380,29 @@ export function ClinicianReportReadyView({
         </div>
 
         <ReportSection label="Recommendation">{r.recommendation}</ReportSection>
+
+        {/* Folded-in secondary observations: non-TB side information. */}
+        {r.support_devices.length > 0 && (
+          <div className="space-y-1" data-testid="clinician-report-support-devices">
+            <SectionLabel>Support devices</SectionLabel>
+            <ul className="ml-4 list-disc space-y-0.5 text-[11px] text-offwhite/85">
+              {r.support_devices.map((d, i) => (
+                <li key={i}>{d}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {r.incidental_findings.length > 0 && (
+          <div className="space-y-1" data-testid="clinician-report-incidentals">
+            <SectionLabel>Incidental findings (non-TB)</SectionLabel>
+            <ul className="ml-4 list-disc space-y-0.5 text-[11px] text-offwhite/85">
+              {r.incidental_findings.map((f, i) => (
+                <li key={i}>{f}</li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {r.limitations.length > 0 && (
           <div className="space-y-1" data-testid="clinician-report-limitations">

@@ -9,7 +9,6 @@ import { BoxEvidenceHeatmap } from './details/BoxEvidenceHeatmap';
 import { ZonalBars } from './details/ZonalBars';
 import { PathologyList } from './details/PathologyList';
 import { ClinicianReport } from './details/ClinicianReport';
-import { SecondaryObservations } from './details/SecondaryObservations';
 import { ImageLightbox } from './details/ImageLightbox';
 import type { LocalTriageResult } from '@/lib/providers/localTriage';
 
@@ -294,7 +293,9 @@ export function VerdictCard({
           + details panel), per UX direction. Renders only when the local
           pipeline produced a result we can ground a narrative against. */}
       {clinicianReportReady && localResult && imageDataUrl && primaryModel && fallbackModel && (
-        <div className="mt-4 space-y-4 border-t border-border pt-3">
+        <div className="mt-4 border-t border-border pt-3">
+          {/* One unified report: radiology narrative + headline + the
+              folded-in non-TB secondary observations, from a single call. */}
           <ClinicianReport
             apiKey={openaiKey ?? ''}
             primaryModel={primaryModel}
@@ -302,15 +303,6 @@ export function VerdictCard({
             imageDataUrl={imageDataUrl}
             localResult={localResult}
             adjudication={adjudication}
-          />
-          {/* Phase B — non-TB side information (image quality, devices,
-              cardiomediastinal, incidentals). Opt-in, never influences verdict. */}
-          <SecondaryObservations
-            apiKey={openaiKey ?? ''}
-            primaryModel={primaryModel}
-            fallbackModel={fallbackModel}
-            imageDataUrl={imageDataUrl}
-            localResult={localResult}
           />
         </div>
       )}

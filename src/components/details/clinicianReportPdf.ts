@@ -81,7 +81,20 @@ export function downloadClinicianReportPdf(opts: PdfOpts): void {
   doc.setTextColor(20, 20, 20);
   doc.setFont('helvetica', 'normal');
 
-  let y = 26;
+  // --------------------------------------------------------------------
+  // Headline — the LLM summary, full width under the verdict band.
+  // --------------------------------------------------------------------
+  let y = 25;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(20, 20, 20);
+  for (const line of doc.splitTextToSize(report.headline, PAGE_W - 2 * MARGIN_X)) {
+    doc.text(line, MARGIN_X, y);
+    y += 5;
+  }
+  doc.setFont('helvetica', 'normal');
+  y += 3;
+  const imageTop = y;
 
   // --------------------------------------------------------------------
   // Two-column body: text left, image right.
@@ -100,22 +113,26 @@ export function downloadClinicianReportPdf(opts: PdfOpts): void {
     const props = doc.getImageProperties(imageDataUrl);
     const aspect = props.height > 0 && props.width > 0 ? props.height / props.width : 1;
     drawnImageH = Math.min(COL_RIGHT_W * aspect, COL_RIGHT_W * 1.4);
-    doc.addImage(imageDataUrl, fmt, COL_RIGHT_X, y, COL_RIGHT_W, drawnImageH);
+    doc.addImage(imageDataUrl, fmt, COL_RIGHT_X, imageTop, COL_RIGHT_W, drawnImageH);
   } catch {
     doc.setFontSize(8);
     doc.setTextColor(150, 150, 150);
-    doc.text('(image embed unavailable)', COL_RIGHT_X, y + 6);
+    doc.text('(image embed unavailable)', COL_RIGHT_X, imageTop + 6);
     doc.setTextColor(20, 20, 20);
     drawnImageH = 8;
   }
 
-  // Left column: TECHNIQUE + COMPARISON + FINDINGS sections.
+  // Left column: TECHNIQUE + COMPARISON + IMAGE QUALITY + FINDINGS sections.
   y = sectionHeading(doc, 'Technique', COL_LEFT_X, y);
   y = paragraph(doc, report.technique, COL_LEFT_X, y, COL_LEFT_W);
   y += 2;
 
   y = sectionHeading(doc, 'Comparison', COL_LEFT_X, y);
   y = paragraph(doc, report.comparison, COL_LEFT_X, y, COL_LEFT_W);
+  y += 2;
+
+  y = sectionHeading(doc, 'Image quality', COL_LEFT_X, y);
+  y = paragraph(doc, report.image_quality, COL_LEFT_X, y, COL_LEFT_W);
   y += 2;
 
   y = sectionHeading(doc, 'Findings', COL_LEFT_X, y);
@@ -125,8 +142,8 @@ export function downloadClinicianReportPdf(opts: PdfOpts): void {
   y = subFinding(doc, 'Bones and soft tissues', report.findings.bones_and_soft_tissues, COL_LEFT_X, y, COL_LEFT_W);
 
   // Pull cursor below whichever column ended lower so the next full-width
-  // section does not overlap the image (image top is at y=26).
-  const yAfterImage = 26 + drawnImageH + 6;
+  // section does not overlap the image.
+  const yAfterImage = imageTop + drawnImageH + 6;
   y = Math.max(y, yAfterImage);
 
   // --------------------------------------------------------------------
@@ -140,6 +157,18 @@ export function downloadClinicianReportPdf(opts: PdfOpts): void {
   y = sectionHeading(doc, 'Recommendation', MARGIN_X, y);
   y = paragraph(doc, report.recommendation, MARGIN_X, y, FULL_W);
   y += 2;
+
+  if (report.support_devices.length > 0) {
+    y = sectionHeading(doc, 'Support devices', MARGIN_X, y);
+    for (const d of report.support_devices) y = bullet(doc, d, MARGIN_X, y, FULL_W);
+    y += 2;
+  }
+
+  if (report.incidental_findings.length > 0) {
+    y = sectionHeading(doc, 'Incidental findings (non-TB)', MARGIN_X, y);
+    for (const f of report.incidental_findings) y = bullet(doc, f, MARGIN_X, y, FULL_W);
+    y += 2;
+  }
 
   if (report.limitations.length > 0) {
     y = sectionHeading(doc, 'Limitations', MARGIN_X, y);

@@ -79,8 +79,10 @@ function mockResponsesEnvelope(report: ClinicianReport): Record<string, unknown>
 
 function wellFormedReport(over: Partial<ClinicianReport> = {}): ClinicianReport {
   return {
+    headline: 'Radiographic findings concerning for active pulmonary tuberculosis.',
     technique: 'Single frontal chest radiograph; AI-assisted TB triage pipeline.',
     comparison: 'No prior studies available for comparison.',
+    image_quality: 'Adequate single frontal projection.',
     findings: {
       lungs_and_airways:
         'Patchy parenchymal opacity in the right upper lobe with suggestion of cavitation; distribution is consistent with apical / posterior upper-lobe TB pattern.',
@@ -101,6 +103,8 @@ function wellFormedReport(over: Partial<ClinicianReport> = {}): ClinicianReport 
     ],
     recommendation:
       'Recommend sputum AFB smear, culture, and NAAT; clinical evaluation for TB risk factors and symptomatic assessment.',
+    support_devices: [],
+    incidental_findings: [],
     key_regions: ['upper_r', 'upper_l'],
     limitations: [
       'Single-view frontal radiograph; lateral and CT may yield additional information.',
@@ -169,20 +173,24 @@ describe('GPT_INTERPRETER constants', () => {
     expect(GPT_INTERPRETER_PROMPT).not.toMatch(/auroc[^.,]*0\./i); // no "AUROC of 0.92x"
   });
 
-  it('schema version is the pinned constant we audit against (v2)', () => {
-    expect(GPT_INTERPRETER_SCHEMA_VERSION).toBe('gpt-interpreter-v2');
+  it('schema version is the pinned constant we audit against (v3)', () => {
+    expect(GPT_INTERPRETER_SCHEMA_VERSION).toBe('gpt-interpreter-v3');
   });
 });
 
 describe('gptInterpreter — happy path', () => {
   it('returns a parsed ClinicianReport + audit pins from a well-formed response', async () => {
     const r = await runInterpreter(wellFormedReport());
+    expect(r.report.headline).toMatch(/tuberculosis/i);
+    expect(r.report.image_quality).toMatch(/projection/i);
     expect(r.report.technique).toMatch(/frontal chest radiograph/i);
     expect(r.report.findings.lungs_and_airways).toMatch(/right upper lobe/i);
     expect(r.report.impression).toHaveLength(2);
     expect(r.report.impression[0]?.likelihood).toBe('primary');
     expect(r.report.impression[1]?.likelihood).toBe('consider');
     expect(r.report.recommendation).toMatch(/sputum/i);
+    expect(r.report.support_devices).toEqual([]);
+    expect(r.report.incidental_findings).toEqual([]);
     expect(r.report.key_regions).toEqual(['upper_r', 'upper_l']);
     expect(r.audit.prompt_hash).toBe(GPT_INTERPRETER_PROMPT_HASH);
     expect(r.audit.schema_version).toBe(GPT_INTERPRETER_SCHEMA_VERSION);
@@ -224,6 +232,23 @@ describe('gptInterpreter — defensive normalization', () => {
     });
     const r = await runInterpreter(overFull);
     expect(r.report.impression.map((d) => d.statement)).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('folds in secondary observations (support devices + incidental findings) and clamps them', async () => {
+    const withDevices = wellFormedReport({
+      support_devices: ['ET tube tip approximately at the carina', '', 'right subclavian central line'],
+      incidental_findings: ['old healed left rib fracture'],
+      headline: '',
+    });
+    const r = await runInterpreter(withDevices);
+    // empty strings dropped
+    expect(r.report.support_devices).toEqual([
+      'ET tube tip approximately at the carina',
+      'right subclavian central line',
+    ]);
+    expect(r.report.incidental_findings).toEqual(['old healed left rib fracture']);
+    // empty headline falls back to a neutral default rather than rendering blank
+    expect(r.report.headline.length).toBeGreaterThan(0);
   });
 
   it('always injects the two mandatory limitation caveats even when the model omits them', async () => {

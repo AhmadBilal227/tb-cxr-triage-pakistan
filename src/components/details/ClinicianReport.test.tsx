@@ -53,8 +53,10 @@ function mockLocal(): LocalTriageResult {
 }
 
 const REPORT: ClinicianReportData = {
+  headline: 'Radiographic findings concerning for active pulmonary tuberculosis.',
   technique: 'Single frontal chest radiograph; AI-assisted TB triage pipeline.',
   comparison: 'No prior studies available for comparison.',
+  image_quality: 'Adequate single frontal projection.',
   findings: {
     lungs_and_airways:
       'Moderate parenchymal opacity in the right upper lobe with apical predominance, consistent with the validated head’s screen-positive call.',
@@ -79,6 +81,8 @@ const REPORT: ClinicianReportData = {
   ],
   recommendation:
     'Recommend sputum AFB smear, culture, and NAAT; clinical evaluation for TB risk factors and symptomatic assessment.',
+  support_devices: ['ET tube tip approximately at the carina'],
+  incidental_findings: ['Old healed left rib fracture.'],
   key_regions: ['upper_r'],
   limitations: [
     'Single-view frontal radiograph; lateral and CT may yield additional information.',
@@ -140,8 +144,17 @@ describe('ClinicianReport — ready state (ClinicianReportReadyView)', () => {
       <ClinicianReportReadyView report={REPORT} modelId="gpt-5.5-2026-04-23" latencyMs={4321} />,
     );
     expect(html).toContain('data-testid="clinician-report-body"');
+    // v3: LLM headline summary leads the report
+    expect(html).toContain('data-testid="clinician-report-headline"');
+    expect(html).toContain('concerning for active pulmonary tuberculosis');
     expect(html).toContain('data-testid="clinician-report-findings"');
     expect(html).toContain('data-testid="clinician-report-impression"');
+    // v3: folded-in secondary observations render in the same report
+    expect(html).toContain('data-testid="clinician-report-support-devices"');
+    expect(html).toContain('ET tube tip approximately at the carina');
+    expect(html).toContain('data-testid="clinician-report-incidentals"');
+    expect(html).toContain('Old healed left rib fracture');
+    expect(html).toContain('Image quality');
     expect(html).toContain('data-testid="clinician-report-limitations"');
     // Section labels render
     expect(html).toMatch(/Technique/);
@@ -171,7 +184,7 @@ describe('ClinicianReport — ready state (ClinicianReportReadyView)', () => {
     );
     expect(html).toContain('data-testid="clinician-report-disclosure"');
     expect(html).toContain('gpt-5.5-2026-04-23');
-    expect(html).toContain('gpt-interpreter-v2');
+    expect(html).toContain('gpt-interpreter-v3');
     expect(html).toContain('Narrative interpretation only');
     expect(html).toContain('does not change the verdict');
     expect(html).toContain('4.3s');
