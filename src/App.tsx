@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Command as CommandIcon, Settings as SettingsIcon, ShieldAlert } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  Activity,
+  BarChart3,
+  Command as CommandIcon,
+  Settings as SettingsIcon,
+  ShieldAlert,
+} from 'lucide-react';
 import { usePipeline } from '@/hooks/usePipeline';
+import { useUrlBoundOverlay } from '@/hooks/useUrlBoundOverlay';
 import { useSettings } from '@/store/settings';
 import { embedWithFallback } from '@/lib/providers/classify';
 import { blobToDataURL } from '@/lib/utils';
 import type { BBox } from '@/lib/providers/parsers';
-import { addLabeledCase, listHistory } from '@/lib/db';
+import { addLabeledCase, getHistory, listHistory } from '@/lib/db';
 import { importLabeledSet, type ImportProgress } from '@/lib/labeledSet';
 import { buildSessionExport, downloadJSON } from '@/lib/export';
 import type { CaseHistoryRecord } from '@/lib/types';
@@ -58,8 +65,22 @@ export default function App(): JSX.Element {
     };
   }, [image]);
   const [leftOpen, setLeftOpen] = useState(true);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [paletteOpen, setPaletteOpen] = useState(false);
+  // Overlays are URL-bound (?settings=1, ?palette=1, ?trace=1) so the
+  // browser back button closes them instead of exiting the SPA. FirstUseModal
+  // stays unbound on purpose, it's a consent gate.
+  const [settingsOpen, setSettingsOpen] = useUrlBoundOverlay('settings');
+  const [paletteOpen, setPaletteOpen] = useUrlBoundOverlay('palette');
+  const [traceOpen, setTraceOpen] = useUrlBoundOverlay('trace');
+  // Lightbox state lifted from VerdictCard so it can be URL-bound here in
+  // App (where the Router context lives) without forcing the existing
+  // VerdictCard tests to wrap in MemoryRouter.
+  const [lightboxOpen, setLightboxOpen] = useUrlBoundOverlay('lightbox');
+  // Loaded case is also URL-bound (?case=<historyId>) so cases are
+  // refresh-survivable and shareable. The effect below loads from
+  // IndexedDB when the param is present; absent means "in-progress
+  // case from a drop/sample" which lives in local state only.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlCaseId = searchParams.get('case');
   const [dragging, setDragging] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [samples, setSamples] = useState<SampleEntry[]>([]);
@@ -85,7 +106,7 @@ export default function App(): JSX.Element {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [setPaletteOpen]);
 
   const startAnalysis = useCallback(
     async (blob: Blob, name: string) => {
@@ -149,7 +170,13 @@ export default function App(): JSX.Element {
     });
     reset();
     setStatus(null);
-  }, [reset]);
+    // Clear ?case=<id> so the URL stops claiming a history record is active.
+    if (searchParams.get('case')) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('case');
+      setSearchParams(next, { replace: true });
+    }
+  }, [reset, searchParams, setSearchParams]);
 
   const onLabeledFiles = useCallback(
     async (files: FileList | null) => {
@@ -211,11 +238,35 @@ export default function App(): JSX.Element {
     [image, settings],
   );
 
-  const onSelectHistory = useCallback((rec: CaseHistoryRecord) => {
-    const url = URL.createObjectURL(rec.blob);
-    setImage({ blob: rec.blob, url, name: rec.imageName });
-    setStatus(`Loaded ${rec.imageName} from history (read-only — re-drop to re-run).`);
-  }, []);
+  // History selection is URL-driven: clicking a thumbnail pushes ?case=<id>,
+  // and the effect below loads the record from IndexedDB and rehydrates the
+  // image. This also handles fresh loads of a shared ?case=<id> link.
+  const onSelectHistory = useCallback(
+    (rec: CaseHistoryRecord) => {
+      if (searchParams.get('case') === rec.id) return;
+      const next = new URLSearchParams(searchParams);
+      next.set('case', rec.id);
+      setSearchParams(next);
+    },
+    [searchParams, setSearchParams],
+  );
+
+  useEffect(() => {
+    if (!urlCaseId) return;
+    let cancelled = false;
+    void getHistory(urlCaseId).then((rec) => {
+      if (cancelled || !rec) return;
+      const url = URL.createObjectURL(rec.blob);
+      setImage((prev) => {
+        if (prev) URL.revokeObjectURL(prev.url);
+        return { blob: rec.blob, url, name: rec.imageName };
+      });
+      setStatus(`Loaded ${rec.imageName} from history (read-only — re-drop to re-run).`);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [urlCaseId]);
 
   const actions = useMemo(
     () =>
@@ -261,6 +312,19 @@ export default function App(): JSX.Element {
               fallback {(state.run.fallbackRate * 100).toFixed(0)}%
             </span>
           )}
+          <Button variant="ghost" size="sm" onClick={() => navigate('/validate')}>
+            <BarChart3 className="h-3.5 w-3.5" /> Validate
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setTraceOpen(!traceOpen)}
+            aria-pressed={traceOpen}
+            aria-label={traceOpen ? 'Hide trace' : 'Show trace'}
+            className={traceOpen ? 'text-provider-openai' : undefined}
+          >
+            <Activity className="h-3.5 w-3.5" /> Trace
+          </Button>
           <Button variant="ghost" size="sm" onClick={() => setPaletteOpen(true)}>
             <CommandIcon className="h-3.5 w-3.5" /> K
           </Button>
@@ -274,8 +338,8 @@ export default function App(): JSX.Element {
       <div className="flex flex-1 overflow-hidden">
         <LeftRail open={leftOpen} onToggle={() => setLeftOpen((v) => !v)} onSelect={onSelectHistory} />
 
-        <main className="relative flex flex-1 flex-col overflow-hidden">
-          <div className="flex-1 overflow-hidden">
+        <main className="relative flex flex-1 flex-col overflow-y-auto">
+          <div className="min-h-[40vh] flex-1 overflow-hidden">
             <DropCanvas
               imageUrl={image?.url ?? null}
               boxes={boxes}
@@ -305,6 +369,8 @@ export default function App(): JSX.Element {
                 openaiKey={settings.openaiKey}
                 primaryModel={settings.models.adjudicator}
                 fallbackModel={settings.models.adjudicatorFallback}
+                lightboxOpen={lightboxOpen}
+                onLightboxOpenChange={setLightboxOpen}
               />
             </div>
           )}
@@ -320,9 +386,11 @@ export default function App(): JSX.Element {
           )}
         </main>
 
-        <aside className="w-96 shrink-0 border-l border-border bg-surface">
-          <AgentTrace state={state} />
-        </aside>
+        {traceOpen && (
+          <aside className="w-96 shrink-0 border-l border-border bg-surface">
+            <AgentTrace state={state} />
+          </aside>
+        )}
       </div>
 
       {/* Hidden inputs */}

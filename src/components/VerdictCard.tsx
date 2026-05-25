@@ -9,6 +9,7 @@ import { BoxEvidenceHeatmap } from './details/BoxEvidenceHeatmap';
 import { ZonalBars } from './details/ZonalBars';
 import { PathologyList } from './details/PathologyList';
 import { ClinicianReport } from './details/ClinicianReport';
+import { ImageLightbox } from './details/ImageLightbox';
 import type { LocalTriageResult } from '@/lib/providers/localTriage';
 
 const VERDICT_META: Record<Verdict, { label: string; color: string }> = {
@@ -28,6 +29,8 @@ export function VerdictCard({
   openaiKey,
   primaryModel,
   fallbackModel,
+  lightboxOpen: lightboxOpenProp,
+  onLightboxOpenChange,
 }: {
   adjudication: Adjudication;
   ensemble: EnsembleResult | null;
@@ -45,10 +48,20 @@ export function VerdictCard({
   openaiKey?: string;
   primaryModel?: string;
   fallbackModel?: string;
+  /** Lifted lightbox state — App owns the URL binding. */
+  lightboxOpen?: boolean;
+  onLightboxOpenChange?: (next: boolean) => void;
 }): JSX.Element {
   const [showWhy, setShowWhy] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Lightbox state is LIFTED to the parent (App.tsx) so the URL-bound hook
+  // lives where the Router context exists, and existing VerdictCard tests
+  // don't need a router wrapper. When props are absent we fall back to local
+  // useState — the lightbox still works, just without back-button parity.
+  const [localLightbox, setLocalLightbox] = useState(false);
+  const lightboxOpen = lightboxOpenProp ?? localLightbox;
+  const setLightboxOpen = onLightboxOpenChange ?? setLocalLightbox;
   const meta = VERDICT_META[adjudication.verdict];
 
   // Honesty contract: when every perception path failed (no OpenAI key, local
@@ -163,11 +176,30 @@ export function VerdictCard({
         </div>
       </div>
 
-      {/* M24 always-on: BoxEvidence heatmap renders when the local pathway emitted a grid. */}
+      {/* M24 always-on: BoxEvidence heatmap renders when the local pathway emitted a grid.
+          Fullscreen affordance opens the URL-bound ImageLightbox below. */}
       {boxGrid && (
         <div className="mt-3 rounded-lg border border-border bg-surface-2 p-3">
-          <BoxEvidenceHeatmap grid={boxGrid} imageUrl={imageDataUrl} />
+          <BoxEvidenceHeatmap
+            grid={boxGrid}
+            imageUrl={imageDataUrl}
+            onOpenLightbox={imageDataUrl ? () => setLightboxOpen(true) : undefined}
+          />
         </div>
+      )}
+
+      {/* Full-screen image viewer with progressive evidence overlays. Mounts only
+          when we have an image to show; chrome auto-hides after 2.5s of inactivity. */}
+      {imageDataUrl && (boxGrid || zonalScores || txrvPathologies) && (
+        <ImageLightbox
+          open={lightboxOpen}
+          onOpenChange={setLightboxOpen}
+          imageUrl={imageDataUrl}
+          boxGrid={boxGrid ?? null}
+          zonalScores={zonalScores ?? null}
+          txrvPathologies={txrvPathologies ?? null}
+          verdictLabel={meta.label}
+        />
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -240,18 +272,22 @@ export function VerdictCard({
               <PathologyList pathologies={txrvPathologies} />
             </div>
           )}
-          {/* M24 — on-demand GPT clinician report. Requires local result + key + image url. */}
-          {clinicianReportReady && localResult && imageDataUrl && primaryModel && fallbackModel && (
-            <div className="border-t border-border pt-2">
-              <ClinicianReport
-                apiKey={openaiKey ?? ''}
-                primaryModel={primaryModel}
-                fallbackModel={fallbackModel}
-                imageDataUrl={imageDataUrl}
-                localResult={localResult}
-              />
-            </div>
-          )}
+        </div>
+      )}
+
+      {/* M24 — radiology report CTA lives BELOW the body content (action row
+          + details panel), per UX direction. Renders only when the local
+          pipeline produced a result we can ground a narrative against. */}
+      {clinicianReportReady && localResult && imageDataUrl && primaryModel && fallbackModel && (
+        <div className="mt-4 border-t border-border pt-3">
+          <ClinicianReport
+            apiKey={openaiKey ?? ''}
+            primaryModel={primaryModel}
+            fallbackModel={fallbackModel}
+            imageDataUrl={imageDataUrl}
+            localResult={localResult}
+            adjudication={adjudication}
+          />
         </div>
       )}
     </motion.div>

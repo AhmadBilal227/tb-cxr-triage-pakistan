@@ -1,25 +1,31 @@
 /**
- * GPT-AS-INTERPRETER (Milestone 24).
+ * GPT-AS-INTERPRETER (Milestone 24 → v2 radiologist rewrite).
  *
- * The opposite of M21's `vlmTriage`. M21 asks gpt-5.5 vision to GIVE A VERDICT on
- * the image (because no in-browser perception backbone exists). M24's interpreter
- * asks gpt-5.5 vision to TRANSLATE THE VALIDATED MODEL'S STRUCTURED OUTPUT INTO
- * A CLINICIAN-STYLE PARAGRAPH. The verdict already exists — it came from the
- * Rad-DINO + TXRV + TBHeadT2 + InactiveSequelaeHead pipeline running locally
- * under its calibrated temperatures. The model is forbidden from disagreeing
- * with it; it may only describe the evidence the local model flagged.
+ * The opposite of M21's `vlmTriage`. M21 asks gpt-5.5 vision to GIVE A VERDICT
+ * on the image. M24's interpreter asks gpt-5.5 vision to TRANSLATE THE
+ * VALIDATED MODEL'S STRUCTURED OUTPUT INTO A RADIOLOGY-REPORT-STYLE
+ * NARRATIVE. The verdict already exists, produced by the Rad-DINO + TXRV +
+ * TBHeadT2 + InactiveSequelaeHead pipeline running locally under its
+ * calibrated temperatures. The model is forbidden from disagreeing with it;
+ * it may only describe the evidence the local model flagged.
  *
- * This is the keep-AUROC-0.922-load-bearing design. The validated model decides;
- * GPT narrates. Anything stronger than that crosses the line from honest
- * enrichment into laundering a VLM's opinion as a calibrated verdict.
+ * v2 (2026-05-25) rewrites the schema + prompt to produce a STRUCTURED
+ * RADIOLOGY REPORT (RSNA-style Findings + Impression + Recommendation) using
+ * Fleischner Society terminology, intended for radiologist consumption rather
+ * than ML-scientist consumption. The honesty contract is preserved: zones must
+ * be a subset of the supplied per-zone vocabulary, pathology terms must come
+ * from the TXRV top-5, and the first impression item must match the pipeline
+ * verdict. The prompt is grounded in the literature on LLM radiology report
+ * generation (MAIRA / MAIRA-Seg / MAIRA2: bounding-box and segmentation
+ * grounding prevents hallucination) and RSNA RadReport structural conventions.
  *
- * COST/LATENCY: ~$0.01-0.04 per call, ~5-15s. On-demand only (the UI fires this
- * on a "Generate clinician report" click; result is cached in component state so
- * re-opening Details doesn't re-bill).
+ * COST/LATENCY: ~$0.01-0.04 per call, ~5-15s. On-demand only (the UI fires
+ * this on a "Generate report" click; result is cached in component state so
+ * re-opening does not re-bill).
  *
- * AUDIT PINS: prompt_hash + schema_version + model_id_from_response are returned
- * in the call envelope so any future portfolio export can join a narrative to
- * the exact prompt+schema that produced it.
+ * AUDIT PINS: prompt_hash + schema_version + model_id_from_response are
+ * returned in the call envelope so any portfolio export can join a narrative
+ * to the exact prompt+schema that produced it.
  */
 import type { JsonSchemaFormat } from '@/lib/providers/openai';
 import { openaiJSON } from '@/lib/providers/openai';
@@ -28,92 +34,196 @@ import type { LocalTriageResult } from './localTriage';
 
 // ---------------------------------------------------------------------------
 // Schema versioning — bump when prompt or schema changes meaningfully.
+// v1 (M24 original): finding/key_regions/confidence_qualifier/differential.
+// v2 (M24 rewrite):  RSNA-style technique/findings/impression/recommendation.
 // ---------------------------------------------------------------------------
-export const GPT_INTERPRETER_SCHEMA_VERSION = 'gpt-interpreter-v1' as const;
+export const GPT_INTERPRETER_SCHEMA_VERSION = 'gpt-interpreter-v2' as const;
 
-export type ConfidenceQualifier = 'low' | 'moderate' | 'high';
-export type DifferentialLikelihood = 'consider' | 'less_likely';
+export type ImpressionLikelihood = 'primary' | 'consider' | 'less_likely';
 
-export interface DifferentialAlternative {
-  label: string;
-  likelihood: DifferentialLikelihood;
-  /** 1 sentence from the local-model evidence. */
-  rationale: string;
+export interface ImpressionItem {
+  /** One short clinical statement. */
+  statement: string;
+  /**
+   * 'primary' = the pipeline-anchored reading (MUST be the first item and MUST
+   * match the verdict). 'consider' / 'less_likely' = differential alternatives
+   * ranked by fit to the pipeline evidence.
+   */
+  likelihood: ImpressionLikelihood;
 }
 
+/** RSNA-style sub-sections under FINDINGS. Each is a short paragraph (1-3 sentences). */
+export interface FindingsSections {
+  lungs_and_airways: string;
+  pleura: string;
+  cardiomediastinum: string;
+  bones_and_soft_tissues: string;
+}
+
+/**
+ * Structured radiology report. The shape mirrors the RSNA RadReport convention
+ * for chest radiograph (Exam, Comparison, Technique, Findings by region,
+ * Impression, Recommendation).
+ */
 export interface ClinicianReport {
-  /** 1-2 sentences, evidence-grounded, evidence-only. NOT a diagnosis claim. */
-  finding: string;
-  /** Zones the LOCAL MODEL flagged (e.g. ['upper_r','hilar']). Subset of the zones we passed in. */
+  /** Single short sentence describing how the image was acquired and read. */
+  technique: string;
+  /** "No prior studies available for comparison." unless told otherwise. */
+  comparison: string;
+  findings: FindingsSections;
+  /** Numbered list ranked by clinical significance. First item is verdict-anchored. */
+  impression: ImpressionItem[];
+  /** 1-2 sentences, actionable next step. */
+  recommendation: string;
+  /** Zone keys the report referenced. MUST be a subset of the supplied zonal vocabulary. */
   key_regions: string[];
-  confidence_qualifier: ConfidenceQualifier;
-  top_differential_alternatives: DifferentialAlternative[];
-  /** Non-null when the model refused or noted a limitation it could not bridge. */
-  refusal_or_limitation: string | null;
+  /** Always includes the standard single-view + radiographic-vs-microbiological caveats. */
+  limitations: string[];
 }
 
 // ---------------------------------------------------------------------------
 // The JSON schema we pass to the Responses API's structured-output mode.
+// All fields are required and additionalProperties:false so OpenAI's strict
+// mode can enforce the shape; semantic constraints (e.g. zone-subset) are
+// then enforced by our own validator below.
 // ---------------------------------------------------------------------------
 export const GPT_INTERPRETER_SCHEMA: JsonSchemaFormat = {
-  name: 'clinician_report',
+  name: 'radiologist_report',
   schema: {
     type: 'object',
     additionalProperties: false,
     properties: {
-      finding: { type: 'string' },
-      key_regions: { type: 'array', items: { type: 'string' } },
-      confidence_qualifier: { type: 'string', enum: ['low', 'moderate', 'high'] },
-      top_differential_alternatives: {
+      technique: { type: 'string' },
+      comparison: { type: 'string' },
+      findings: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          lungs_and_airways: { type: 'string' },
+          pleura: { type: 'string' },
+          cardiomediastinum: { type: 'string' },
+          bones_and_soft_tissues: { type: 'string' },
+        },
+        required: ['lungs_and_airways', 'pleura', 'cardiomediastinum', 'bones_and_soft_tissues'],
+      },
+      impression: {
         type: 'array',
         items: {
           type: 'object',
           additionalProperties: false,
           properties: {
-            label: { type: 'string' },
-            likelihood: { type: 'string', enum: ['consider', 'less_likely'] },
-            rationale: { type: 'string' },
+            statement: { type: 'string' },
+            likelihood: { type: 'string', enum: ['primary', 'consider', 'less_likely'] },
           },
-          required: ['label', 'likelihood', 'rationale'],
+          required: ['statement', 'likelihood'],
         },
       },
-      refusal_or_limitation: { type: ['string', 'null'] },
+      recommendation: { type: 'string' },
+      key_regions: { type: 'array', items: { type: 'string' } },
+      limitations: { type: 'array', items: { type: 'string' } },
     },
     required: [
-      'finding',
+      'technique',
+      'comparison',
+      'findings',
+      'impression',
+      'recommendation',
       'key_regions',
-      'confidence_qualifier',
-      'top_differential_alternatives',
-      'refusal_or_limitation',
+      'limitations',
     ],
   },
 };
 
 /**
- * The system prompt is the keep-the-discipline contract. It DOES NOT let the
- * model freelance on the image; every sentence the model writes must ground
- * itself in the local pipeline's structured output. The verdict is FIXED.
+ * System prompt v3 — board-certified radiologist drafting a report on top of
+ * an AI screening pipeline's structured output.
  *
- * Notes on what is INTENTIONALLY ABSENT:
- *   - No "expert radiologist" persona — anchors the model to a register it
- *     does not have the training data to occupy.
- *   - No chain-of-thought scaffolding. Structured output discourages CoT.
- *   - No LODO numbers in the prompt — those belong in the disclosure under
- *     the rendered narrative, not in the inference context (anchoring).
+ * v2 → v3 changes (2026-05-25, second pass):
+ *   - Explains the PIPELINE ARCHITECTURE up front so the model can describe
+ *     what the system actually saw and why, rather than treating the
+ *     evidence as a black-box JSON blob.
+ *   - Adds TB-SPECIFIC RADIOLOGY KNOWLEDGE the model can draw from to fill
+ *     gaps the trained head cannot measure (pattern characterization,
+ *     distribution, severity grading, differential considerations grounded
+ *     in the radiology literature).
+ *   - Expands RECOMMENDATION guidance: lateral view, comparison with prior,
+ *     CT chest for cavitation / lymphadenopathy / mass characterization,
+ *     follow-up imaging cadence.
+ *   - Tightens LIMITATIONS to include the always-include comparison caveat.
+ *
+ * Grounding source: RSNA RadReport structural convention + Fleischner Society
+ * terminology + MAIRA / MAIRA-Seg literature on hallucination suppression
+ * via spatial / feature constraint.
+ *
+ * Schema version stays at v2 (response shape unchanged); the prompt_hash on
+ * the audit envelope changes automatically with the prompt text, so any
+ * downstream join on prompt_hash will see the bump.
  */
 export const GPT_INTERPRETER_PROMPT = [
-  'You are translating the structured output of a validated TB-triage pipeline (Rad-DINO + TorchXRayVision + TBHeadT2 + InactiveSequelaeHead, LODO AUROC 0.922) into a short clinician-style narrative.',
-  'You are NOT diagnosing the image. The pipeline already produced the verdict, the calibrated tb_prob, and the per-zone probabilities. Your job is to put the pipeline\'s OWN evidence into a 1-2 sentence paragraph and a small differential.',
-  'STRICT RULES:',
-  '- Use ONLY zones the pipeline flagged in the per-zone probabilities (the highest probabilities are the regions to mention by name).',
-  '- Use ONLY pathology features the pipeline\'s TXRV head ranked in the top scores (do NOT introduce findings the pipeline did not score).',
-  '- Do NOT contradict the pipeline verdict. If the verdict is "tb", describe the evidence consistent with that verdict; if "no_tb", describe the absence of evidence; if "abstain", describe the borderline / ambiguity.',
-  '- top_differential_alternatives ranks alternatives by FIT TO THE PIPELINE EVIDENCE, not fit to the image alone.',
-  '- key_regions MUST be a subset of the zone keys the user provides (e.g. ["upper_r","hilar"]).',
-  '- confidence_qualifier reflects the calibrated tb_prob (high near 0/1, moderate in mid-band, low in the borderline band 0.35-0.65).',
-  '- refusal_or_limitation is non-null ONLY when the image data the pipeline preprocessed is degraded or you cannot honestly map its scores into a narrative.',
-  'No demographic priors. No inferred clinical history. No claim that your narrative is calibrated. No chain-of-thought — output ONLY the schema fields.',
-].join(' ');
+  'You are a board-certified radiologist drafting a structured chest radiograph report for a pulmonologist or radiology colleague. The image is a single frontal chest X-ray. An AI screening pipeline has already run on this image and is handing you its structured output as context. Your role is to describe radiographic findings in clinical-radiology language and add radiologist-level context the trained head cannot measure. You DO NOT diagnose, disagree with, or contradict the pipeline\'s verdict.',
+  '',
+  'CRITICAL TASK CONSTRAINT (from the radiology AI literature — Jiang et al. 2024 showed that vision-language models cannot reliably generate de-novo radiology reports from images alone)',
+  '- You are NOT performing image interpretation. The image is provided ONLY to disambiguate the pipeline\'s structured output when describing distribution, severity, or character. Your textual content MUST originate from the supplied evidence (zones + TXRV findings + verdict + threshold), not from your own image impression.',
+  '- ONE SENTENCE PER FINDING. Each sentence in the findings sub-sections should describe at most one pathological feature, anchored to one zone or one TXRV finding from the supplied evidence (MAIRA-2 style spatial grounding suppresses hallucination).',
+  '- HEDGED LANGUAGE FOR BORDERLINE CASES. When tb_prob is within +/- 0.10 of the decision threshold (0.6105), use radiologic uncertainty language: "indeterminate", "equivocal", "cannot be excluded", "suggestive of", rather than confident assertions.',
+  '',
+  'THE PIPELINE YOU ARE READING (so you can describe its reasoning faithfully when needed)',
+  '- Vision backbone: Rad-DINO (self-supervised on ~1M chest radiographs) provides the global + 37x37 patch features.',
+  '- Findings backbone: TorchXRayVision DenseNet-121 supplies 18 supervised pathology scores (Lung Opacity, Effusion, Consolidation, Lung Lesion, Infiltration, Atelectasis, Cardiomegaly, Pneumonia, Pleural Thickening, Fibrosis, etc.).',
+  '- TB classifier head: a small head on top of the combined features, trained leave-one-dataset-out across five public TB cohorts and temperature-scaled. It emits a calibrated tb_prob and per-zone TB probabilities for seven zones (upper_l/upper_r, mid_l/mid_r, lower_l/lower_r, hilar).',
+  '- Inactive sequelae head: a parallel head trained to flag healed-scar patterns; if it fires, the safety net routes the case to ABSTAIN instead of clearing it.',
+  '- Decision rule: tb_prob is compared to a 95%-sensitivity threshold (0.6105). Above → screen positive. Below → screen negative. Three deterministic safety-net rules can only escalate "no_tb" → "abstain", never the reverse.',
+  '',
+  'VOICE',
+  '- Impersonal, declarative radiology-report voice. Correct: "There is patchy parenchymal opacity in the right upper lobe with suggestion of cavitation." Incorrect: "I think..." / "The model believes..." / "It looks like...".',
+  '- Use Fleischner Society terminology where applicable: consolidation; cavity (thick irregular wall, may contain a gas-fluid level); nodule; mass; ground-glass opacity; reticular opacity; fibroproductive density; scarring / fibrosis; calcified granuloma; hilar lymphadenopathy; pleural effusion; pleural thickening; atelectasis; tree-in-bud opacities; miliary pattern.',
+  '',
+  'ANCHORING (mandatory — keeps the report honest)',
+  '- Mention anatomical zones BY NAME only when they appear in the per-zone probabilities supplied below. Vocabulary: upper_l = left upper lobe; upper_r = right upper lobe; mid_l = left mid-lung field; mid_r = right mid-lung field; lower_l = left lower lobe; lower_r = right lower lobe; hilar = hilar / perihilar region. In prose use the anatomical name; in key_regions use the key.',
+  '- Mention pathology terms only when they appear in the TXRV top-5. Translate to Fleischner-equivalent terminology in prose: TXRV "Lung Opacity" → "parenchymal opacity"; "Effusion" → "pleural effusion"; "Lung Lesion" → "focal pulmonary lesion"; "Fibrosis" → "fibrotic scarring"; "Pleural Thickening" → "pleural thickening"; "Atelectasis" → "atelectasis"; "Cardiomegaly" → "cardiac enlargement"; "Infiltration" → "interstitial infiltrate".',
+  '- Where the pipeline did NOT flag a region, state so explicitly ("The pleural spaces are clear." / "The cardiomediastinal silhouette is unremarkable.").',
+  '',
+  'TB-SPECIFIC RADIOLOGY KNOWLEDGE TO DRAW FROM (use to characterize patterns and frame the differential)',
+  '- Post-primary (reactivation) TB classically presents as apical / posterior upper-lobe fibroproductive opacity, cavitation, and bronchogenic spread (tree-in-bud).',
+  '- Primary TB often shows mid/lower-zone consolidation, hilar / mediastinal lymphadenopathy, and unilateral pleural effusion; may be radiographically subtle in adults.',
+  '- Miliary TB: diffuse fine 1-3 mm nodules; haematogenous spread.',
+  '- Inactive / healed TB: dense calcified granulomas, apical fibrocicatricial scarring, upper-lobe volume loss, pleural thickening — these are radiographically SIMILAR to active TB but are NOT contagious and do NOT need treatment. The pipeline\'s sequelae head exists specifically to flag this distinction.',
+  '- TB radiographic mimics worth keeping in the differential when the pattern is non-classical: granulomatous lung disease (sarcoidosis), non-tuberculous mycobacterial infection, fungal infection (histoplasmosis, coccidioidomycosis), organizing pneumonia, malignancy (cavitary lung cancer is the single most important differential for a cavitary upper-lobe lesion in an older patient), septic emboli.',
+  '',
+  'FINDINGS (populate all four sub-sections, each 1-3 sentences; describe pattern, distribution, and SEVERITY grading where appropriate: mild / moderate / extensive)',
+  '- lungs_and_airways: the primary signal. Describe parenchymal pattern (consolidation, cavitation, nodular, miliary, reticular, ground-glass), distribution (apical / posterior / diffuse), severity, and any TB-classical or non-classical features.',
+  '- pleura: pleural effusion, pleural thickening, pneumothorax — only when flagged. Otherwise: "The pleural spaces are clear."',
+  '- cardiomediastinum: heart size, mediastinal width, hilar configuration. Comment on hilar / mediastinal lymphadenopathy when relevant. Otherwise: "The cardiomediastinal silhouette is unremarkable."',
+  '- bones_and_soft_tissues: rib / vertebral abnormalities only if flagged. Otherwise: "No osseous abnormality is identified on this projection."',
+  '',
+  'IMPRESSION (numbered list, most-to-least clinically significant; each item one short clinical statement)',
+  '- The FIRST impression item MUST have likelihood "primary" and MUST match the pipeline verdict:',
+  '  · verdict "tb"      → "Radiographic findings raise concern for active pulmonary tuberculosis. Bacteriological confirmation (sputum AFB smear, culture, or NAAT) is recommended."',
+  '  · verdict "no_tb"   → "No radiographic findings to suggest active pulmonary tuberculosis on this single frontal view. A negative screen does not exclude early or subclinical disease."',
+  '  · verdict "abstain" → "Findings are equivocal for active pulmonary tuberculosis. Recommend expert second-reader review and clinical correlation."',
+  '- Subsequent items (max 2 differentials) are ranked by FIT TO THE PIPELINE EVIDENCE, with likelihood "consider" or "less_likely". Each one short statement. Pull from the TB-mimic list above when the radiographic pattern is non-classical.',
+  '',
+  'RECOMMENDATION (1-2 short sentences, actionable, clinical, radiologist-level)',
+  '- For "tb": recommend sputum AFB smear, culture, and NAAT. If cavitation, nodules, or lymphadenopathy are described, additionally recommend lateral view and CT chest for further characterization.',
+  '- For "no_tb": no further radiographic workup is indicated based on this exam alone. Test symptomatic or high-risk patients per WHO TB screening algorithm regardless. If prior films exist, comparison is helpful.',
+  '- For "abstain": expert radiologist second-read; lateral view and CT chest for further characterization; clinical correlation; sputum testing if symptomatic or high-risk.',
+  '',
+  'LIMITATIONS (array of short caveats). Always include all three:',
+  '- "Single-view frontal radiograph; lateral and CT may yield additional characterization."',
+  '- "Radiographic features are not diagnostic of microbiological status; bacteriological confirmation is required for the diagnosis of active tuberculosis."',
+  '- "No prior imaging available for comparison; serial follow-up imaging may be valuable to establish chronicity or progression."',
+  '- Plus any preprocessing warnings supplied below.',
+  '',
+  'key_regions — array of zone keys from the controlled vocabulary the report referenced. MUST be a subset of the keys supplied in the evidence message.',
+  '',
+  'STRICT NEGATIVE CONSTRAINTS',
+  '- Do NOT mention model identifiers, schema versions, calibration constants, AUROC, or ML / AI jargon in any prose section. The reader is a clinician. (You may reference "AI-assisted screen" in the Technique section.)',
+  '- Do NOT speculate beyond the pipeline\'s evidence (no demographic priors, no symptom inference, no co-pathology the pipeline did not flag).',
+  '- Do NOT use first-person voice.',
+  '- Do NOT include the research-only disclaimer in the report sections; that lives in a separate disclosure rendered outside the report.',
+  '',
+  'Output ONLY the JSON schema fields. No chain-of-thought. No commentary.',
+].join('\n');
 
 // FNV-1a 32-bit hash for audit pinning (mirrors vlmTriage's fnv1aHex).
 function fnv1aHex(s: string): string {
@@ -137,8 +247,7 @@ function isStringArray(v: unknown): v is string[] {
   return Array.isArray(v) && v.every((x) => typeof x === 'string');
 }
 
-const QUALIFIER_VALUES: readonly ConfidenceQualifier[] = ['low', 'moderate', 'high'];
-const LIKELIHOOD_VALUES: readonly DifferentialLikelihood[] = ['consider', 'less_likely'];
+const LIKELIHOOD_VALUES: readonly ImpressionLikelihood[] = ['primary', 'consider', 'less_likely'];
 
 function pickEnum<T extends string>(v: unknown, allowed: readonly T[], fallback: T): T {
   if (typeof v === 'string' && (allowed as readonly string[]).includes(v)) return v as T;
@@ -149,47 +258,73 @@ function clipString(v: unknown, fallback: string): string {
   return typeof v === 'string' && v.length > 0 ? v : fallback;
 }
 
+const ALWAYS_INCLUDE_LIMITATIONS: readonly string[] = [
+  'Single-view frontal radiograph; lateral and CT may yield additional information.',
+  'Radiographic features are not diagnostic of microbiological status.',
+];
+
+function normalizeFindings(raw: unknown): FindingsSections {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    lungs_and_airways: clipString(r.lungs_and_airways, '(no parenchymal description returned)'),
+    pleura: clipString(r.pleura, 'The pleural spaces are clear.'),
+    cardiomediastinum: clipString(
+      r.cardiomediastinum,
+      'The cardiomediastinal silhouette is unremarkable.',
+    ),
+    bones_and_soft_tissues: clipString(
+      r.bones_and_soft_tissues,
+      'No osseous abnormality is identified on this projection.',
+    ),
+  };
+}
+
+function normalizeImpression(raw: unknown): ImpressionItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((d): ImpressionItem | null => {
+      if (d === null || typeof d !== 'object') return null;
+      const o = d as Record<string, unknown>;
+      const statement = typeof o.statement === 'string' && o.statement.length > 0 ? o.statement : null;
+      if (statement === null) return null;
+      return {
+        statement,
+        likelihood: pickEnum<ImpressionLikelihood>(o.likelihood, LIKELIHOOD_VALUES, 'less_likely'),
+      };
+    })
+    .filter((d): d is ImpressionItem => d !== null)
+    .slice(0, 4);
+}
+
+function normalizeLimitations(raw: unknown): string[] {
+  const provided = isStringArray(raw) ? raw : [];
+  // Always ensure the two load-bearing caveats are present, even if the model
+  // forgot or paraphrased them away.
+  const out = [...provided];
+  for (const required of ALWAYS_INCLUDE_LIMITATIONS) {
+    const already = out.some((l) => l.toLowerCase().includes(required.toLowerCase().slice(0, 20)));
+    if (!already) out.push(required);
+  }
+  return out;
+}
+
 function validateAndNormalizeReport(raw: unknown, allowedZones: readonly string[]): ClinicianReport {
   const r = (raw ?? {}) as Record<string, unknown>;
-  const finding = clipString(r.finding, '(no finding returned)');
-  // Subset filter: zones the model named MUST be a subset of the zones we passed in
-  // (so the model cannot invent zone keys we never told it about).
   const allowed = new Set(allowedZones);
   const key_regions = isStringArray(r.key_regions)
     ? r.key_regions.filter((z) => allowed.has(z))
     : [];
-  const confidence_qualifier = pickEnum<ConfidenceQualifier>(
-    r.confidence_qualifier,
-    QUALIFIER_VALUES,
-    'low',
-  );
-  const rawDiffs = Array.isArray(r.top_differential_alternatives)
-    ? r.top_differential_alternatives
-    : [];
-  const top_differential_alternatives: DifferentialAlternative[] = rawDiffs
-    .map((d): DifferentialAlternative | null => {
-      if (d === null || typeof d !== 'object') return null;
-      const o = d as Record<string, unknown>;
-      const label = typeof o.label === 'string' ? o.label : null;
-      if (label === null) return null;
-      return {
-        label,
-        likelihood: pickEnum<DifferentialLikelihood>(o.likelihood, LIKELIHOOD_VALUES, 'less_likely'),
-        rationale: clipString(o.rationale, ''),
-      };
-    })
-    .filter((d): d is DifferentialAlternative => d !== null)
-    .slice(0, 3);
-  const refusal_or_limitation =
-    typeof r.refusal_or_limitation === 'string' && r.refusal_or_limitation.length > 0
-      ? r.refusal_or_limitation
-      : null;
   return {
-    finding,
+    technique: clipString(
+      r.technique,
+      'Single frontal chest radiograph; AI-assisted TB triage pipeline.',
+    ),
+    comparison: clipString(r.comparison, 'No prior studies available for comparison.'),
+    findings: normalizeFindings(r.findings),
+    impression: normalizeImpression(r.impression),
+    recommendation: clipString(r.recommendation, '(no recommendation returned)'),
     key_regions,
-    confidence_qualifier,
-    top_differential_alternatives,
-    refusal_or_limitation,
+    limitations: normalizeLimitations(r.limitations),
   };
 }
 
@@ -228,18 +363,15 @@ export interface GptInterpreterOpts {
  */
 export function buildEvidenceMessage(local: LocalTriageResult): string {
   const lines: string[] = [];
-  lines.push('VALIDATED PIPELINE OUTPUT (translate this, do not re-diagnose):');
+  lines.push('VALIDATED PIPELINE OUTPUT (translate this into the report; do not re-diagnose):');
   lines.push(`verdict: ${local.verdict}`);
   lines.push(`tb_prob (calibrated under T=${local.audit.calibration.T.toFixed(3)}): ${local.tb_prob.toFixed(4)}`);
   lines.push(`decided_at_threshold: ${local.decided_at_threshold.toFixed(4)}`);
-  lines.push(`s_inactive (scar/sequelae score, under T_seq=${local.audit.calibration.T_sequelae.toFixed(3)}): ${local.s_inactive.toFixed(4)}`);
+  lines.push(`s_inactive (scar / sequelae score, under T_seq=${local.audit.calibration.T_sequelae.toFixed(3)}): ${local.s_inactive.toFixed(4)}`);
   if (local.safety_net_applied) {
     lines.push(`safety_net_applied: ${local.safety_net_applied}`);
   }
 
-  // Top-5 zones by probability so the model has both the headline (top zone) and the
-  // 'less probable but mentionable' tier. Below the top 5, the values are usually <0.05
-  // and would clutter the differential.
   if (local.zonal_scores) {
     const sortedZones = Object.entries(local.zonal_scores)
       .filter(([, v]) => typeof v === 'number')
@@ -250,8 +382,6 @@ export function buildEvidenceMessage(local: LocalTriageResult): string {
     }
   }
 
-  // Top-5 TXRV findings (the model has 18; the top-5 are what the head's fusion lever
-  // weighted most — and what the narrative should mention).
   if (local.txrv_pathologies) {
     const top = Object.entries(local.txrv_pathologies)
       .sort((a, b) => b[1] - a[1])
@@ -263,12 +393,14 @@ export function buildEvidenceMessage(local: LocalTriageResult): string {
   }
 
   if (local.image_quality.warnings.length > 0) {
-    lines.push('preprocessing warnings:');
+    lines.push('preprocessing warnings (include in the limitations array):');
     for (const w of local.image_quality.warnings) lines.push(`  - ${w}`);
   }
 
   lines.push('');
-  lines.push('Now produce the clinician_report JSON. Mention zones by name; do not invent zone keys not listed above. Differential alternatives must be grounded in the TXRV findings or the scar/sequelae score, not in pixels.');
+  lines.push(
+    'Now produce the radiologist_report JSON. Use anatomical zone names in prose; cite zone keys in key_regions. First impression item must be the verdict-anchored statement.',
+  );
   return lines.join('\n');
 }
 
@@ -276,9 +408,7 @@ export function buildEvidenceMessage(local: LocalTriageResult): string {
  * Single deterministic call to gpt-5.5 vision. The model receives BOTH the
  * image AND the evidence text — image so it can ground its language in what
  * it actually sees, evidence so its narrative is anchored to the validated
- * pipeline's numbers (not its own image impression). Temperature defaults
- * (the Responses API's default is fine; we don't override it here because the
- * project's existing `openaiJSON` helper doesn't expose a temperature knob).
+ * pipeline's numbers (not its own image impression).
  */
 export async function gptInterpreter(opts: GptInterpreterOpts): Promise<GptInterpreterCall> {
   if (!opts.apiKey) {
@@ -296,8 +426,6 @@ export async function gptInterpreter(opts: GptInterpreterOpts): Promise<GptInter
     schema: GPT_INTERPRETER_SCHEMA,
   });
 
-  // Echo the model id from the response envelope when available; fall back to
-  // the slot we asked for (the openaiJSON helper already does fallback for us).
   const envelope = res.raw as { model?: unknown } | null;
   const modelIdFromResponse =
     envelope && typeof envelope.model === 'string' && envelope.model.length > 0

@@ -1,12 +1,13 @@
 /**
- * gptInterpreter provider tests (Milestone 24).
+ * gptInterpreter provider tests (Milestone 24, v2 radiologist schema).
  *
  * The provider's load-bearing properties:
  *   1. It calls the Responses API with the gpt-interpreter prompt + strict
  *      JSON schema; the evidence message is built from the local result.
  *   2. Validator normalizes/clamps the response: enums fall back to safe
  *      defaults; key_regions is filtered to the SUBSET of zone keys we
- *      passed in (so the model cannot invent zone names).
+ *      passed in (so the model cannot invent zone names); the two
+ *      mandatory limitation lines are injected if the model omitted them.
  *   3. Missing OpenAI key raises before any network call.
  *
  * Strategy: mock fetch (not openaiJSON) — covers the full path including
@@ -76,6 +77,39 @@ function mockResponsesEnvelope(report: ClinicianReport): Record<string, unknown>
   };
 }
 
+function wellFormedReport(over: Partial<ClinicianReport> = {}): ClinicianReport {
+  return {
+    technique: 'Single frontal chest radiograph; AI-assisted TB triage pipeline.',
+    comparison: 'No prior studies available for comparison.',
+    findings: {
+      lungs_and_airways:
+        'Patchy parenchymal opacity in the right upper lobe with suggestion of cavitation; distribution is consistent with apical / posterior upper-lobe TB pattern.',
+      pleura: 'The pleural spaces are clear.',
+      cardiomediastinum: 'The cardiomediastinal silhouette is unremarkable.',
+      bones_and_soft_tissues: 'No osseous abnormality is identified on this projection.',
+    },
+    impression: [
+      {
+        statement:
+          'Radiographic findings raise concern for active pulmonary tuberculosis. Bacteriological confirmation (sputum AFB smear, culture, or NAAT) is recommended.',
+        likelihood: 'primary',
+      },
+      {
+        statement: 'Bacterial pneumonia.',
+        likelihood: 'consider',
+      },
+    ],
+    recommendation:
+      'Recommend sputum AFB smear, culture, and NAAT; clinical evaluation for TB risk factors and symptomatic assessment.',
+    key_regions: ['upper_r', 'upper_l'],
+    limitations: [
+      'Single-view frontal radiograph; lateral and CT may yield additional information.',
+      'Radiographic features are not diagnostic of microbiological status.',
+    ],
+    ...over,
+  };
+}
+
 beforeEach(() => {
   vi.restoreAllMocks();
 });
@@ -123,48 +157,33 @@ describe('GPT_INTERPRETER constants', () => {
     expect(GPT_INTERPRETER_SCHEMA_HASH).toMatch(/^[0-9a-f]{8}$/);
   });
 
-  it('the prompt forbids re-diagnosis and contradiction', () => {
-    expect(GPT_INTERPRETER_PROMPT).toMatch(/not diagnosing the image/i);
-    expect(GPT_INTERPRETER_PROMPT).toMatch(/do not contradict the pipeline verdict/i);
-    // Anti-anchoring: no LODO numbers in the prompt body
-    expect(GPT_INTERPRETER_PROMPT).not.toMatch(/0\.8/); // no specific sensitivity figure
+  it('the prompt forbids re-diagnosis and contradiction (v2 radiologist tone)', () => {
+    // v2 phrasing: "You do NOT diagnose, disagree, or contradict the pipeline."
+    expect(GPT_INTERPRETER_PROMPT).toMatch(/do not diagnose/i);
+    expect(GPT_INTERPRETER_PROMPT).toMatch(/disagree.*contradict/i);
+    // Anti-anchoring: no LODO performance numbers in the prompt body. The
+    // prompt may reference the word AUROC inside a "do NOT mention" negative
+    // constraint, but must never anchor a specific value the model could echo.
+    expect(GPT_INTERPRETER_PROMPT).not.toMatch(/0\.8(00|0)?\b/); // no specific sensitivity figure
     expect(GPT_INTERPRETER_PROMPT).not.toMatch(/0\.91[12]/); // no specific specificity figure
+    expect(GPT_INTERPRETER_PROMPT).not.toMatch(/auroc[^.,]*0\./i); // no "AUROC of 0.92x"
   });
 
-  it('schema version is the pinned constant we audit against', () => {
-    expect(GPT_INTERPRETER_SCHEMA_VERSION).toBe('gpt-interpreter-v1');
+  it('schema version is the pinned constant we audit against (v2)', () => {
+    expect(GPT_INTERPRETER_SCHEMA_VERSION).toBe('gpt-interpreter-v2');
   });
 });
 
 describe('gptInterpreter — happy path', () => {
   it('returns a parsed ClinicianReport + audit pins from a well-formed response', async () => {
-    const wellFormed: ClinicianReport = {
-      finding: 'Patchy upper-right consolidation; tb_prob 0.9999 above the 0.6105 threshold.',
-      key_regions: ['upper_r', 'upper_l'],
-      confidence_qualifier: 'high',
-      top_differential_alternatives: [
-        { label: 'pneumonia', likelihood: 'less_likely', rationale: 'Pneumonia 0.25 below the dominant Lung Opacity 0.52' },
-        { label: 'atelectasis', likelihood: 'less_likely', rationale: 'Atelectasis 0.10 — not flagged by the pipeline' },
-      ],
-      refusal_or_limitation: null,
-    };
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () =>
-        new Response(JSON.stringify(mockResponsesEnvelope(wellFormed)), { status: 200, headers: { 'Content-Type': 'application/json' } }),
-      ),
-    );
-    const r = await gptInterpreter({
-      apiKey: 'sk-test',
-      primaryModel: 'gpt-5.5',
-      fallbackModel: 'gpt-5.5-instant',
-      imageDataUrl: 'data:image/png;base64,iVBORw0K',
-      localResult: mockLocal(),
-    });
-    expect(r.report.finding).toBe(wellFormed.finding);
+    const r = await runInterpreter(wellFormedReport());
+    expect(r.report.technique).toMatch(/frontal chest radiograph/i);
+    expect(r.report.findings.lungs_and_airways).toMatch(/right upper lobe/i);
+    expect(r.report.impression).toHaveLength(2);
+    expect(r.report.impression[0]?.likelihood).toBe('primary');
+    expect(r.report.impression[1]?.likelihood).toBe('consider');
+    expect(r.report.recommendation).toMatch(/sputum/i);
     expect(r.report.key_regions).toEqual(['upper_r', 'upper_l']);
-    expect(r.report.confidence_qualifier).toBe('high');
-    expect(r.report.top_differential_alternatives).toHaveLength(2);
     expect(r.audit.prompt_hash).toBe(GPT_INTERPRETER_PROMPT_HASH);
     expect(r.audit.schema_version).toBe(GPT_INTERPRETER_SCHEMA_VERSION);
     expect(r.audit.model_id_from_response).toBe('gpt-5.5-2026-04-23');
@@ -173,85 +192,66 @@ describe('gptInterpreter — happy path', () => {
 
 describe('gptInterpreter — defensive normalization', () => {
   it('filters key_regions to the subset of zones we passed in (model cannot invent zone keys)', async () => {
-    const drifted: ClinicianReport = {
-      finding: 'note',
+    const drifted = wellFormedReport({
       // 'made_up_zone' is NOT in zonal_scores; must be dropped.
       key_regions: ['upper_r', 'made_up_zone', 'hilar'],
-      confidence_qualifier: 'moderate',
-      top_differential_alternatives: [],
-      refusal_or_limitation: null,
-    };
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () =>
-        new Response(JSON.stringify(mockResponsesEnvelope(drifted)), { status: 200, headers: { 'Content-Type': 'application/json' } }),
-      ),
-    );
-    const r = await gptInterpreter({
-      apiKey: 'sk-test',
-      primaryModel: 'gpt-5.5',
-      fallbackModel: 'gpt-5.5-instant',
-      imageDataUrl: 'data:image/png;base64,iVBORw0K',
-      localResult: mockLocal(),
     });
+    const r = await runInterpreter(drifted);
     expect(r.report.key_regions).toEqual(['upper_r', 'hilar']);
   });
 
-  it('confidence_qualifier falls back to "low" on an unknown enum value (safe default)', async () => {
-    const drifted = {
-      finding: 'x',
-      key_regions: [],
-      confidence_qualifier: 'extremely_high', // not in enum
-      top_differential_alternatives: [],
-      refusal_or_limitation: null,
-    };
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () =>
-        new Response(JSON.stringify(mockResponsesEnvelope(drifted as unknown as ClinicianReport)), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      ),
-    );
-    const r = await gptInterpreter({
-      apiKey: 'sk-test',
-      primaryModel: 'gpt-5.5',
-      fallbackModel: 'gpt-5.5-instant',
-      imageDataUrl: 'data:image/png;base64,iVBORw0K',
-      localResult: mockLocal(),
+  it('impression likelihood falls back to "less_likely" on an unknown enum value (safe default)', async () => {
+    const drifted: ClinicianReport = wellFormedReport({
+      impression: [
+        { statement: 'first', likelihood: 'extremely_high' as unknown as 'primary' },
+      ],
     });
-    expect(r.report.confidence_qualifier).toBe('low');
+    const r = await runInterpreter(drifted);
+    expect(r.report.impression).toHaveLength(1);
+    expect(r.report.impression[0]?.likelihood).toBe('less_likely');
   });
 
-  it('caps top_differential_alternatives at 3 entries', async () => {
-    const overFull: ClinicianReport = {
-      finding: 'x',
-      key_regions: [],
-      confidence_qualifier: 'moderate',
-      top_differential_alternatives: [
-        { label: 'a', likelihood: 'consider', rationale: 'r' },
-        { label: 'b', likelihood: 'less_likely', rationale: 'r' },
-        { label: 'c', likelihood: 'consider', rationale: 'r' },
-        { label: 'd', likelihood: 'consider', rationale: 'r' },
-        { label: 'e', likelihood: 'consider', rationale: 'r' },
+  it('caps impression at 4 entries', async () => {
+    const overFull = wellFormedReport({
+      impression: [
+        { statement: 'a', likelihood: 'primary' },
+        { statement: 'b', likelihood: 'consider' },
+        { statement: 'c', likelihood: 'less_likely' },
+        { statement: 'd', likelihood: 'less_likely' },
+        { statement: 'e', likelihood: 'less_likely' },
+        { statement: 'f', likelihood: 'less_likely' },
       ],
-      refusal_or_limitation: null,
-    };
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () =>
-        new Response(JSON.stringify(mockResponsesEnvelope(overFull)), { status: 200, headers: { 'Content-Type': 'application/json' } }),
-      ),
-    );
-    const r = await gptInterpreter({
-      apiKey: 'sk-test',
-      primaryModel: 'gpt-5.5',
-      fallbackModel: 'gpt-5.5-instant',
-      imageDataUrl: 'data:image/png;base64,iVBORw0K',
-      localResult: mockLocal(),
     });
-    expect(r.report.top_differential_alternatives.map((d) => d.label)).toEqual(['a', 'b', 'c']);
+    const r = await runInterpreter(overFull);
+    expect(r.report.impression.map((d) => d.statement)).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('always injects the two mandatory limitation caveats even when the model omits them', async () => {
+    const stripped = wellFormedReport({ limitations: [] });
+    const r = await runInterpreter(stripped);
+    expect(r.report.limitations.some((l) => /single-view frontal radiograph/i.test(l))).toBe(true);
+    expect(
+      r.report.limitations.some((l) =>
+        /radiographic features are not diagnostic of microbiological status/i.test(l),
+      ),
+    ).toBe(true);
+  });
+
+  it('defaults missing findings sub-sections to neutral radiology-report phrasing', async () => {
+    // Strict-mode schema would normally enforce findings shape, but the validator
+    // also defends against a model that emits a placeholder with no content.
+    const stripped = wellFormedReport({
+      findings: {
+        lungs_and_airways: '',
+        pleura: '',
+        cardiomediastinum: '',
+        bones_and_soft_tissues: '',
+      },
+    });
+    const r = await runInterpreter(stripped);
+    expect(r.report.findings.pleura).toMatch(/pleural spaces are clear/i);
+    expect(r.report.findings.cardiomediastinum).toMatch(/cardiomediastinal silhouette is unremarkable/i);
+    expect(r.report.findings.bones_and_soft_tissues).toMatch(/no osseous abnormality/i);
   });
 });
 
@@ -292,3 +292,26 @@ describe('gptInterpreter — error paths', () => {
     ).rejects.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Shared test helper: stubs fetch with the given report payload + invokes
+// gptInterpreter with the standard test params.
+// ---------------------------------------------------------------------------
+async function runInterpreter(report: ClinicianReport): Promise<Awaited<ReturnType<typeof gptInterpreter>>> {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      new Response(JSON.stringify(mockResponsesEnvelope(report)), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    ),
+  );
+  return gptInterpreter({
+    apiKey: 'sk-test',
+    primaryModel: 'gpt-5.5',
+    fallbackModel: 'gpt-5.5-instant',
+    imageDataUrl: 'data:image/png;base64,iVBORw0K',
+    localResult: mockLocal(),
+  });
+}

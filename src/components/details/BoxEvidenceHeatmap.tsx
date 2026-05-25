@@ -18,6 +18,7 @@
  * Accessibility: each cell renders an `<title>` so screen-readers expose
  * `row,col: probability`. The container has a stable test id.
  */
+import { Maximize2 } from 'lucide-react';
 import { viridis } from './colorScale';
 
 export interface BoxEvidenceHeatmapProps {
@@ -29,6 +30,12 @@ export interface BoxEvidenceHeatmapProps {
   imageUrl?: string;
   /** Optional caption override; defaults to the M24 honest-framing line. */
   caption?: string;
+  /**
+   * When provided, renders a fullscreen affordance in the top-right that
+   * invokes this callback. Wiring lives in the VerdictCard so the lightbox
+   * state can be URL-bound for back-button parity.
+   */
+  onOpenLightbox?: () => void;
 }
 
 const DEFAULT_CAPTION =
@@ -40,6 +47,7 @@ export function BoxEvidenceHeatmap({
   grid,
   imageUrl,
   caption = DEFAULT_CAPTION,
+  onOpenLightbox,
 }: BoxEvidenceHeatmapProps): JSX.Element {
   // Defensive — if a malformed grid slips through, render an empty panel rather than crash.
   const safeGrid: ReadonlyArray<ReadonlyArray<number>> =
@@ -54,6 +62,18 @@ export function BoxEvidenceHeatmap({
         role="img"
         aria-label="Box-evidence heatmap, 8 by 8 grid"
       >
+        {onOpenLightbox && (
+          <button
+            type="button"
+            onClick={onOpenLightbox}
+            data-testid="box-evidence-fullscreen"
+            aria-label="Open image in fullscreen"
+            className="absolute right-1.5 top-1.5 z-10 rounded bg-black/60 p-1 text-white/80 opacity-0 transition-opacity hover:bg-black/80 hover:text-white group-hover:opacity-100"
+            style={{ opacity: 1 }}
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+          </button>
+        )}
         {imageUrl && (
           // eslint-disable-next-line @next/next/no-img-element -- not a Next app
           <img

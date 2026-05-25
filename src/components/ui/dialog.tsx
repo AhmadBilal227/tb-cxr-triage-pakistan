@@ -47,6 +47,40 @@ export const DialogContent = React.forwardRef<
 ));
 DialogContent.displayName = 'DialogContent';
 
+/**
+ * Full-screen modal content (used for the radiology report viewer).
+ * Caller is responsible for laying out the children with their own
+ * header / body / scroll regions.
+ */
+export const FullscreenContent = React.forwardRef<
+  React.ElementRef<typeof DialogPrimitive.Content>,
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { hideClose?: boolean }
+>(({ className, children, hideClose, ...props }, ref) => (
+  <DialogPrimitive.Portal>
+    <Overlay />
+    <DialogPrimitive.Content
+      ref={ref}
+      className={cn(
+        'fixed inset-2 z-50 flex flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-2xl animate-fade-in sm:inset-6',
+        className,
+      )}
+      {...props}
+    >
+      {children}
+      {!hideClose && (
+        <DialogPrimitive.Close
+          className="absolute right-4 top-4 z-10 rounded-md p-1 text-muted hover:bg-surface-2 hover:text-offwhite"
+          aria-label="Close"
+        >
+          <X className="h-5 w-5" />
+          <span className="sr-only">Close</span>
+        </DialogPrimitive.Close>
+      )}
+    </DialogPrimitive.Content>
+  </DialogPrimitive.Portal>
+));
+FullscreenContent.displayName = 'FullscreenContent';
+
 /** Right-side drawer content (used for Settings). */
 export const DrawerContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
