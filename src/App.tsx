@@ -4,6 +4,7 @@ import { Command as CommandIcon, Settings as SettingsIcon, ShieldAlert } from 'l
 import { usePipeline } from '@/hooks/usePipeline';
 import { useSettings } from '@/store/settings';
 import { embedWithFallback } from '@/lib/providers/classify';
+import { blobToDataURL } from '@/lib/utils';
 import type { BBox } from '@/lib/providers/parsers';
 import { addLabeledCase, listHistory } from '@/lib/db';
 import { importLabeledSet, type ImportProgress } from '@/lib/labeledSet';
@@ -34,6 +35,28 @@ export default function App(): JSX.Element {
   const { state, analyze, reset } = usePipeline();
 
   const [image, setImage] = useState<ActiveImage | null>(null);
+  // M24 — eagerly convert the active blob to a data URL once. The ClinicianReport
+  // CTA in VerdictCard hands the data URL straight to gpt-5.5 vision via the
+  // Responses API; doing the conversion here keeps the component synchronous
+  // and the conversion off the click path (~ms latency on a typical CXR).
+  const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!image) {
+      setImageDataUrl(null);
+      return;
+    }
+    let cancelled = false;
+    blobToDataURL(image.blob)
+      .then((url) => {
+        if (!cancelled) setImageDataUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setImageDataUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [image]);
   const [leftOpen, setLeftOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -278,6 +301,10 @@ export default function App(): JSX.Element {
                 fallbackRate={state.run?.fallbackRate ?? 0}
                 onDisagree={onDisagree}
                 onOpenSettings={() => setSettingsOpen(true)}
+                imageDataUrl={imageDataUrl ?? undefined}
+                openaiKey={settings.openaiKey}
+                primaryModel={settings.models.adjudicator}
+                fallbackModel={settings.models.adjudicatorFallback}
               />
             </div>
           )}
