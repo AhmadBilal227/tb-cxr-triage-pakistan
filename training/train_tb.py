@@ -831,6 +831,62 @@ def _nonbox_auc(ops: list[dict]) -> float:
     return float(np.mean(v)) if v else float("nan")
 
 
+def load_nih14_normals() -> tuple[dict, np.ndarray, np.ndarray]:
+    """Load NIH ChestX-ray14 `No_Finding` images as label-0 (NEGATIVE) training rows.
+
+    The lever against the specificity-drift the external Pakistani eval surfaced
+    (US normals spec 0.984 vs Pakistani 0.675): diverse negatives should help the
+    model not over-flag new-site normals. (Plan correction 2026-05-25.)
+
+    These rows have cls/patches/txrv/zones already extracted by the SAME pipeline
+    (data/features_nih14.npz, M27a). Schema compatibility with features.npz:
+      - cls      (N, 768)      f32   MATCH
+      - patches  (N, 64, 768)  f16   MATCH  (CRITICAL: the patch-based head needs this)
+      - txrv     (N, 1042)     f32   MATCH
+      - zones    (N, 64, 7)    f16   MATCH
+      - grid_label (8, 8)            ABSENT in NIH cache -> synthesized as zeros
+                                     (normals carry no TB box supervision)
+      - has_box                      ABSENT -> synthesized as False (no boxes)
+    Returns (arrs, y, source) where arrs has the SAME keys as _load_arrs() so the
+    caller can concatenate directly. y is all zeros; source is all 'nih14_normals'.
+    """
+    path = DATA / "features_nih14.npz"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"NIH14 feature cache missing: {path}. Extract with M27a pipeline first."
+        )
+    d = np.load(path, allow_pickle=True)
+    mask = d["No_Finding"].astype("int64") == 1
+    n = int(mask.sum())
+    arrs = {
+        "cls": d["cls"][mask].astype("float32"),
+        "patches": d["patches"][mask].astype("float32"),
+        "txrv": d["txrv"][mask].astype("float32"),
+        "zones": d["zones"][mask].astype("float32"),
+        # NIH normals carry no TB localization -> empty grid + no-box flag.
+        "grid_label": np.zeros((n, 8, 8), dtype="float32"),
+        "has_box": np.zeros(n, dtype=bool),
+    }
+    y = np.zeros(n, dtype="int64")
+    source = np.array(["nih14_normals"] * n)
+    print(f"nih14_normals: {n} diverse US normals added as label-0 (No_Finding==1)")
+    return arrs, y, source
+
+
+def _parse_sources_flag(argv: list[str]) -> list[str] | None:
+    """Parse an optional `--sources a,b,c` flag. Returns the list or None if absent.
+
+    Recognized extra source ids beyond the features.npz contents:
+      nih14_normals  -> NIH No_Finding negatives (load_nih14_normals)
+    """
+    if "--sources" not in argv:
+        return None
+    i = argv.index("--sources")
+    if i + 1 >= len(argv):
+        raise SystemExit("--sources requires a comma-separated value")
+    return [s.strip() for s in argv[i + 1].split(",") if s.strip()]
+
+
 def main() -> None:
     random.seed(SEED)
     np.random.seed(SEED)
@@ -843,6 +899,21 @@ def main() -> None:
     y = d["y"].astype("int64")
     src = d["source"].astype(str)
     groups = d["group"].astype("int64") if "group" in d.files else None
+
+    # Optional extra negative sources (P1 lever). --sources nih14_normals appends the
+    # NIH No_Finding diverse-negatives pool (the specificity-drift lever). The dup-cluster
+    # guard `group` has no NIH ids, so NIH rows get fresh group ids past the existing max
+    # (they can't collide with the existing sources' provenance clusters).
+    extra = _parse_sources_flag(sys.argv)
+    if extra and "nih14_normals" in extra:
+        ex_arrs, ex_y, ex_src = load_nih14_normals()
+        for k in arrs:
+            arrs[k] = np.concatenate([arrs[k], ex_arrs[k]], axis=0)
+        y = np.concatenate([y, ex_y])
+        src = np.concatenate([src, ex_src])
+        if groups is not None:
+            new_groups = np.arange(len(ex_y)) + int(groups.max()) + 1
+            groups = np.concatenate([groups, new_groups])
     print("ENDPOINT: radiographic-TB-pattern (NOT bacteriologically-confirmed active TB). Research preview.")
     print("sources:", {s: int((src == s).sum()) for s in sorted(set(src.tolist()))})
     print(f"total {len(y)}  pos={int((y==1).sum())}  neg={int((y==0).sum())}  "

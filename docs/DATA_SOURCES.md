@@ -8,6 +8,37 @@ reference at the image level. This file ranks what could fill those gaps + how t
 or radiographic-only (no clinical). The **image-level + clinical + bacteriological pairing almost always
 needs a DUA or outreach.** So the multimodal/activity data we actually want lives behind 3 doors.
 
+## Integrated / registered (P0.5, 2026-05-25)
+
+### 0a. Mendeley Pakistani TB CXR (Kiran/Jabeen 2024, CC-BY-4.0) — EXTERNAL VALIDATION HOLDOUT
+2,494 TB+ + 514 normal (3,008 total) from a Pakistani hospital. Single-site, preprocessed.
+- DOI: https://doi.org/10.17632/8j2g3csprk.2
+- On disk: `data/raw/Kiran:Jabeen/{TB Chest X-rays, Normal Chest X-rays}/`
+- Source id in build_index: `mendeley_pk` (tagged `split='external_holdout'`)
+- **NOT training data.** The external blind eval on this cohort (AUROC 0.781 external vs 0.922 LODO,
+  specificity 0.675 — 1-in-3 normals false-flagged) established it as our only well-powered external
+  TB+ set. It is the standing external eval the GO gate measures generalization against (a site the
+  model never trained on). `build_index.py` routes it to `data/index_external_holdout.csv`, NOT
+  `data/index.csv`. Re-confirm zero overlap with the training index via the dedup audit before each
+  eval (see `data/dedup_audit.log`).
+
+### 0b. PadChest TB-7-label union (BIMCV, Spain, ~150+ TB+) — REQUESTED via BIMCV form, BUILDER REGISTERED
+TB-positive filter is the union of: tuberculosis + sequelae tuberculosis + cavitation + calcified
+adenopathy + granuloma + calcified granuloma + apical pleural thickening (see PMC11843218 for the
+published harvest protocol).
+- Access: BIMCV form request at https://bimcv.cipf.es/bimcv-projects/padchest/
+- Source id in build_index: `padchest_tb` (TRAINING source — atypical-TB richness addresses M24)
+- When the credentialed download lands: place files under `data/raw/padchest_tb/{tb,normal}/` and
+  re-run `build_index.py`. The builder is a no-op (returns 0 rows) until then.
+- Status: DUA form to be submitted (manual, out-of-band). Expected delivery: days.
+
+### 0c. NIH ChestX-ray14 `No_Finding` normals — TRAINING NEGATIVES (specificity-drift lever)
+5,788 diverse US normals, already extracted in `data/features_nih14.npz` (cls/patches/txrv/zones
+present, patches confirmed). Pulled as label-0 training rows via `train_tb.py --sources nih14_normals`.
+Lever against the specificity drift the external Pakistani eval surfaced. NOTE: the raw
+`data/raw/nih14/` dir stays EXCLUDED from `index.csv` (it is also the locked per-finding FPR stress
+set); only the `No_Finding` slice of the pre-extracted feature cache feeds the negative pool.
+
 ## Do this week (open / quick)
 1. **TB Portals (NIAID)** — TOP PICK. ~3,400+ imaging-annotated cases, frontal CXR + CT, **bacteriologically
    confirmed** (culture/smear/DST), **serial films** (5 wk–>2 yr → activity-by-change), linkable clinical/lab.

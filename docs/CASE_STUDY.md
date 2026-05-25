@@ -632,6 +632,24 @@ Cohen strict sens 0.600 (TTA) is a real bump over M24's raw 0.455 — the K=5 av
 
 ---
 
+## Milestone P0.5 — the dataset I almost trained on is the holdout I most needed (2026-05-25)
+
+The original P0.5 plan said to add the Mendeley Kiran/Jabeen Pakistani TB CXR set (2,494 TB+ + 514 normal) to the training corpus as multi-source diversity. Then I ran the first true external blind eval *on that exact set* — and it told a story that flipped the plan. At the shipped calibration (thr 0.6105) the model scored AUROC 0.781 external (vs 0.922 LODO), sensitivity 0.753, and **specificity 0.675** — one in three Pakistani normals false-flagged, against 0.984 specificity on US NIH normals at the same threshold. That is the single most important number the project has produced, because it is the first measurement on a site the model never saw, and it is a *failure mode* (over-flagging new-site normals) distinct from the M24 atypical-TB sensitivity gap.
+
+If I fold that set into training, I lose it. It is the only well-powered external TB+ cohort I have (2,494 positives — enough to satisfy the project's own "no ≥90% sensitivity claim without ~150+ held-out TB positives" rule with room to spare). So the corrected P0.5 makes two moves:
+
+1. **Mendeley PK becomes the external validation holdout, structurally.** `build_index.py` now routes its 3,008 rows to a *separate* manifest, `data/index_external_holdout.csv`, tagged `split='external_holdout'`, and the training-index scan loop skips the `Kiran:Jabeen` raw directory entirely. The training `data/index.csv` row count is **unchanged at 13,260** — I verified the before and after are identical. The holdout cannot enter training by accident because it is never written to the file training reads.
+
+2. **The lever against the specificity drift is negative-class diversity, not more positives.** The eval localized the drift to normals (US 0.984 vs Pakistani 0.675), so the immediately-available fix is to show the model more diverse normals during training. I already had 5,788 NIH ChestX-ray14 `No_Finding` films extracted through the same Rad-DINO + TXRV pipeline (`data/features_nih14.npz`). I added `load_nih14_normals()` + a `--sources nih14_normals` hook to `train_tb.py` so P1 can pull them as label-0 training rows. **The critical check was whether the NIH cache had the `patches` field** — the head is patch-based (ABMIL over 64 patch tokens), so a CLS-only cache would have been a P1 blocker requiring a 10k-image re-extraction. It does: `patches (5788, 64, 768)`, plus `cls (768)`, `txrv (1042)`, `zones (64, 7)`, all schema-compatible with `features.npz`. No re-extraction needed. (`grid_label` and `has_box` are absent for NIH — synthesized as zeros / False, correct since normals carry no TB box supervision.)
+
+I also registered the PadChest TB-7-label union builder (`build_padchest_tb()`, a no-op returning zero rows until the BIMCV DUA lands) so that atypical-TB-rich Spanish data drops in cleanly later, and wrote `training/audit_holdout_overlap.py` to verify the holdout has zero overlap with the training index via md5 + pHash-256 — the same near-duplicate policy as `dedup.py`, but reporting only cross-set matches to `data/dedup_audit.log` and never touching the training dedup graph. A training image leaking into the holdout would invalidate the external number, so this audit guards the one measurement the GO gate depends on.
+
+**Split counts after P0.5:** training index 13,260 rows (unchanged); external holdout 3,008 rows (2,494 TB+ / 514 normal); NIH `No_Finding` negatives available for P1 = 5,788.
+
+**What I learned.** The right question for a dataset isn't always "how do I train on it." The external eval reframed Mendeley PK from "more diversity" to "the only honest generalization measurement I have," and the most valuable thing I can do with a scarce external set is *refuse* to train on it. The specificity failure also taught me where the lever is: I had been thinking about the M24 sensitivity gap as the problem, but the deployed-site failure was the *opposite* error — clearing TB and over-flagging normals are different bugs with different fixes, and the data already on disk (NIH normals) targets the one the field surfaced.
+
+---
+
 ## Maintenance log
 
 *Append a dated, first-person entry after each meaningful milestone: what I set out to do, the key decisions and tradeoffs, the measured result, and what I learned. Keep the honest numbers in.*

@@ -131,16 +131,124 @@ def build_tbx11k(src_dir: Path) -> tuple[list[dict], list[dict]]:
     return binary, latent
 
 
+def build_mendeley_pk() -> list[dict]:
+    """Mendeley Kiran/Jabeen Pakistani TB CXR dataset (May 2024, CC-BY-4.0, v2).
+
+    EXTERNAL VALIDATION HOLDOUT — NOT training data. (Plan correction 2026-05-25.)
+    The external blind eval on this cohort (3,008 images, AUROC 0.781 external vs
+    0.922 LODO, specificity 0.675) established it as our only well-powered external
+    TB+ set (2,494 positives). It is the standing external eval set that P1/P2/P3
+    measure generalization against — a site the model NEVER trained on. So every
+    row here is tagged `split='external_holdout'` and the aggregator routes these
+    rows to data/index_external_holdout.csv, NOT into the training data/index.csv.
+
+    Layout on disk: data/raw/Kiran:Jabeen/{TB Chest X-rays, Normal Chest X-rays}/*.png|jpg
+    (the directory name carries the colon as Mendeley shipped it). Label heuristic:
+    a directory part containing 'tb' (case-insensitive token) -> TB+; a directory
+    part containing 'normal' -> TB-. Logs a warning if no rows are produced so the
+    user knows to inspect the raw dir.
+    """
+    root = RAW / "Kiran:Jabeen"
+    if not root.exists():
+        # Tolerate the canonical-id directory too, in case a future fetch lands there.
+        alt = RAW / "mendeley_pk"
+        if alt.exists():
+            root = alt
+        else:
+            return []
+    rows: list[dict] = []
+    for p in root.rglob("*"):
+        if not (p.is_file() and IMG.search(p.name)):
+            continue
+        rel = p.relative_to(root)
+        parts = [pt.lower() for pt in rel.parts]
+        relstr = str(rel).lower()
+        if "mask" in relstr:
+            continue
+        if any("tb" in pt or "tubercul" in pt for pt in parts):
+            y = 1
+        elif any("normal" in pt or "healthy" in pt for pt in parts):
+            y = 0
+        else:
+            continue
+        rows.append(
+            {
+                "path": str(p.relative_to(REPO)),
+                "label": y,
+                "source": "mendeley_pk",
+                "patient_id": f"mendeley_pk_{p.stem}",
+                "bbox": "[]",  # no bbox available
+                "split": "external_holdout",
+            }
+        )
+    pos = sum(r["label"] for r in rows)
+    if rows:
+        print(f"mendeley_pk (EXTERNAL HOLDOUT): {len(rows)} rows ({pos} TB+, {len(rows) - pos} TB-)")
+    else:
+        print("mendeley_pk: 0 rows — inspect data/raw/Kiran:Jabeen/ (expected ~3008 images)")
+    return rows
+
+
+def build_padchest_tb() -> list[dict]:
+    """PadChest TB-7-label union subset (BIMCV, Spain, ~152-176+ TB+ studies).
+
+    The canonical TB-positive filter is the union of seven PadChest labels:
+      tuberculosis, sequelae tuberculosis, cavitation, calcified adenopathy,
+      granuloma, calcified granuloma, apical pleural thickening.
+    See PMC11843218 for the published harvest protocol.
+
+    Expects data/raw/padchest_tb/{tb,normal}/*.png after manual BIMCV download
+    + filtering by the 7-label union. If the directory is empty (PadChest DUA
+    not yet through), returns an empty list silently. This is a NO-OP at runtime
+    today; the builder is registered so the data drops in cleanly later.
+
+    Unlike mendeley_pk, PadChest is intended as TRAINING data (atypical-TB
+    richness directly addresses the M24 weak spot), so its rows are NOT tagged
+    external_holdout.
+    """
+    root = RAW / "padchest_tb"
+    if not root.exists():
+        return []
+    rows: list[dict] = []
+    for p in root.rglob("*"):
+        if not (p.is_file() and IMG.search(p.name)):
+            continue
+        rel = p.relative_to(root).as_posix().lower()
+        if rel.startswith("tb/"):
+            y = 1
+        elif rel.startswith("normal/"):
+            y = 0
+        else:
+            continue
+        rows.append(
+            {
+                "path": str(p.relative_to(REPO)),
+                "label": y,
+                "source": "padchest_tb",
+                "patient_id": f"padchest_{p.stem}",
+                "bbox": "[]",
+            }
+        )
+    if rows:
+        pos = sum(r["label"] for r in rows)
+        print(f"padchest_tb: {len(rows)} rows ({pos} TB+, {len(rows) - pos} TB-)")
+    return rows
+
+
 def main() -> None:
     rows: list[dict] = []
     latent_rows: list[dict] = []
+    holdout_rows: list[dict] = []
     for src_dir in sorted(d for d in RAW.iterdir() if d.is_dir()):
         src = src_dir.name
-        if src in ("lungseg", "nih14", "nih14_parquet"):
+        if src in ("lungseg", "nih14", "nih14_parquet", "Kiran:Jabeen", "mendeley_pk", "padchest_tb"):
             # lungseg = masks (not TB train/test).
             # nih14 = NIH ChestX-ray14: locked, never-train per-finding FPR stress test — read by
             #         training/stress_metrics.py from its sidecar, NOT registered as TB training data.
             # nih14_parquet = the raw parquet cache for nih14.
+            # Kiran:Jabeen / mendeley_pk = the EXTERNAL VALIDATION HOLDOUT (built explicitly below
+            #         via build_mendeley_pk() and written to index_external_holdout.csv, NOT here).
+            # padchest_tb = future training source, built explicitly below via build_padchest_tb().
             continue
         if src == "tbx11k":
             b, lat = build_tbx11k(src_dir)
@@ -165,6 +273,10 @@ def main() -> None:
             )
             n += 1
         print(f"{src}: {n} labeled images")
+
+    # PadChest TB-7-union is a TRAINING source (no-op until the BIMCV DUA lands).
+    rows.extend(build_padchest_tb())
+
     df = pd.DataFrame(rows)
     out = REPO / "data" / "index.csv"
     df.to_csv(out, index=False)
@@ -175,6 +287,18 @@ def main() -> None:
         lat_out = REPO / "data" / "index_tbx_latent.csv"
         pd.DataFrame(latent_rows).to_csv(lat_out, index=False)
         print(f"\nwrote {lat_out}  latent-TB probe={len(latent_rows)} (held out of the binary LODO)")
+
+    # EXTERNAL VALIDATION HOLDOUT — written to a SEPARATE manifest so it can NEVER
+    # enter training. (Plan correction 2026-05-25: Mendeley PK = holdout, not train.)
+    holdout_rows.extend(build_mendeley_pk())
+    if holdout_rows:
+        ho_df = pd.DataFrame(holdout_rows)
+        ho_out = REPO / "data" / "index_external_holdout.csv"
+        ho_df.to_csv(ho_out, index=False)
+        ho_pos = int((ho_df.label == 1).sum())
+        print(f"\nwrote {ho_out}  EXTERNAL HOLDOUT total={len(ho_df)}  pos={ho_pos}  "
+              f"neg={len(ho_df) - ho_pos}  (EXCLUDED from training index.csv)")
+        print(ho_df.groupby(["source", "label"]).size())
 
 
 if __name__ == "__main__":
