@@ -205,11 +205,29 @@ function LocalModeSection(): JSX.Element {
         </label>
       </div>
       <p className="text-[10px] leading-snug text-muted">
-        Run the validated Rad-DINO + TorchXRayVision + TBHeadT2 pipeline locally on your machine
+        Run the trained Rad-DINO + TorchXRayVision + TBHeadT2 pipeline locally on your machine
         (FastAPI server at the URL below). When ON and reachable, this is the PRIMARY perception
         and gpt-5.5 vision becomes a borderline second-opinion verifier. When OFF (or unreachable),
-        the M21 VLM-primary path runs unchanged. Reported LODO AUROC 0.922, sens 0.800,
-        spec 0.911 on 13,092 held-out predictions (see CASE_STUDY M15-M22).
+        the M21 VLM-primary path runs unchanged. On a new external site (Pakistani cohort, 3,008
+        images) the model measured AUROC 0.78, sens 0.75, spec 0.68 at the shipped operating point —
+        the honest field estimate. The in-distribution LODO numbers (AUROC 0.92, sens 0.80,
+        spec 0.91 on 13,092 held-out predictions) are an upper bound, not what to expect at your
+        site (see CASE_STUDY M15-M22 + Track A).
+      </p>
+      <p
+        className="rounded-md border border-provider-openai/30 bg-provider-openai/5 px-2 py-1.5 text-[10px] leading-snug text-offwhite/90"
+        data-testid="recalibrate-onboarding"
+      >
+        New deployment site? Calibrate to your local cases first —{' '}
+        <a
+          href="/validate"
+          className="font-medium text-provider-openai underline underline-offset-2 hover:opacity-80"
+          data-testid="recalibrate-link"
+        >
+          Validate &amp; recalibrate
+        </a>
+        . The shipped threshold/temperature were fit on the training cohorts and should be re-fit
+        on labeled local cases before trusting sensitivity/specificity.
       </p>
       <Field
         label="Local server URL"
