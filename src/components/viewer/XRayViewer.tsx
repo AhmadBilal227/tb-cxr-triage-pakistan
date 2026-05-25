@@ -159,10 +159,15 @@ export function XRayViewer({
         </div>
       )}
 
-      {/* Floating control toolbar, bottom-center. */}
+      {/* Floating control toolbar, bottom-center. Stop pointer + dblclick from
+          bubbling to the container, otherwise a toolbar click while zoomed
+          (scale > 1) gets captured by the pan handler and the button click is
+          swallowed, and a fast double-click on a control triggers reset. */}
       <div
         className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-0.5 rounded-lg border border-border bg-surface/90 px-1.5 py-1 shadow-lg backdrop-blur"
         data-testid="viewer-toolbar"
+        onPointerDown={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
       >
         <ToolBtn label="Zoom out" onClick={() => applyZoom(1 / 1.25, 0, 0)}>
           <Minus className="h-3.5 w-3.5" />
