@@ -80,7 +80,7 @@ export function ClinicianReportModal({
             {chip.label}
           </span>
           <DialogTitle className="text-sm font-semibold tracking-tight">
-            Radiology Report — TB Triage
+            Radiology Report · TB Triage
           </DialogTitle>
           <div className="ml-auto flex items-center gap-2 pr-10">
             <Button
