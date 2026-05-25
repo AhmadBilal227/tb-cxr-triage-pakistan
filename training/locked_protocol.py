@@ -65,5 +65,105 @@ def make_calibration_split(
     return cal_idx, eval_idx
 
 
+import subprocess
+from datetime import datetime
+
+
+def _git_sha() -> str:
+    try:
+        return subprocess.check_output(
+            ['git', 'rev-parse', 'HEAD'],
+            cwd=str(Path(__file__).parent.parent),
+            text=True,
+        ).strip()
+    except Exception:
+        return 'unknown'
+
+
+def _sigmoid(x: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-x))
+
+
+def _fit_temperature(logit: np.ndarray, label: np.ndarray) -> float:
+    """Grid search T in [0.5, 5.0] to minimize NLL on (logit, label)."""
+    Ts = np.linspace(0.5, 5.0, 91)
+    best_nll = np.inf
+    best_T = 1.0
+    for T in Ts:
+        p = _sigmoid(logit / T).clip(1e-7, 1 - 1e-7)
+        nll = -(label * np.log(p) + (1 - label) * np.log(1 - p)).mean()
+        if nll < best_nll:
+            best_nll = nll
+            best_T = float(T)
+    return best_T
+
+
+def _threshold_for_sensitivity(label: np.ndarray, prob: np.ndarray, target: float = 0.95) -> float:
+    """Smallest threshold such that recall >= target on positives."""
+    pos_scores = np.sort(prob[label == 1])
+    if len(pos_scores) == 0:
+        return 0.5
+    # take the (1-target) quantile of positive scores; anything >= that is called positive
+    idx = max(0, int(np.floor((1 - target) * len(pos_scores))))
+    return float(pos_scores[idx])
+
+
+def fit_locked_calibration(write: bool = True) -> LockedCalibration:
+    """Fit T + thr@95sens on the calibration slice of the cached LODO OOF.
+
+    The calibration slice is the deterministic 20% stratified split from
+    make_calibration_split(seed=P0_CALIBRATION_SEED). The remaining 80% is
+    the evaluation surface that all subsequent measurement uses unchanged.
+    """
+    data_dir = Path(__file__).parent.parent / 'data'
+    oof_path = data_dir / 'image_oof_logits.npz'
+    if not oof_path.exists():
+        raise FileNotFoundError(f'OOF cache missing: {oof_path}. Run M14 LODO first.')
+    d = np.load(oof_path, allow_pickle=True)
+    logit = d['image_logit'].astype('float64')
+    label = d['label'].astype('int64')
+    source = d['source']
+    cal_idx, eval_idx = make_calibration_split(logit, label, source)
+    T = _fit_temperature(logit[cal_idx], label[cal_idx])
+    prob_cal = _sigmoid(logit[cal_idx] / T)
+    thr = _threshold_for_sensitivity(label[cal_idx], prob_cal, target=0.95)
+
+    cal = LockedCalibration(
+        T=T,
+        thr_at_95sens=thr,
+        borderline_low=0.20,  # M26 widening, locked here
+        s_inactive_escalate=0.7126,  # M19 sequelae escalator, locked here
+        asymmetric_evidence_thr=0.88,  # M26 box-evidence high threshold
+        seed=P0_CALIBRATION_SEED,
+        cal_frac=P0_CAL_FRAC,
+        n_cal=int(len(cal_idx)),
+        n_eval=int(len(eval_idx)),
+        git_sha=_git_sha(),
+        timestamp=datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+    )
+
+    if write:
+        LOCKED_JSON.parent.mkdir(parents=True, exist_ok=True)
+        with LOCKED_JSON.open('w') as f:
+            json.dump(cal.__dict__, f, indent=2)
+        print(f'Wrote locked calibration to {LOCKED_JSON}')
+        print(f'  T={cal.T:.4f}  thr@95sens={cal.thr_at_95sens:.4f}')
+        print(f'  n_cal={cal.n_cal}  n_eval={cal.n_eval}')
+
+    return cal
+
+
+def load_locked_calibration() -> LockedCalibration:
+    """Load the locked calibration. Raises if not yet fit (P0 hasn't run)."""
+    if not LOCKED_JSON.exists():
+        raise FileNotFoundError(
+            f'Locked calibration missing: {LOCKED_JSON}. '
+            'Run training/locked_protocol.py to fit it before evaluation.'
+        )
+    with LOCKED_JSON.open() as f:
+        data = json.load(f)
+    return LockedCalibration(**data)
+
+
 if __name__ == '__main__':
-    print(f'P0_CALIBRATION_SEED={P0_CALIBRATION_SEED}, P0_CAL_FRAC={P0_CAL_FRAC}')
+    cal = fit_locked_calibration(write=True)
