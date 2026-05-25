@@ -1,0 +1,178 @@
+{
+  "meta": {
+    "git_sha": "eb3289a4648858d9b44e488a29a791896b8169df",
+    "locked_T": 2.85,
+    "locked_thr_at_95sens": 0.09791444726225379,
+    "locked_borderline_low": 0.2,
+    "measured_at": "2026-05-25T13:01:11Z"
+  },
+  "cohen_blind": {
+    "images": [
+      {
+        "filename": "tb_blind_01.jpg",
+        "true_label": "TB",
+        "tb_prob": 0.5641574263410866,
+        "verdict": "TB"
+      },
+      {
+        "filename": "tb_blind_02.jpg",
+        "true_label": "TB",
+        "tb_prob": 0.740062791330102,
+        "verdict": "TB"
+      },
+      {
+        "filename": "tb_blind_03.png",
+        "true_label": "TB",
+        "tb_prob": 0.5748455179167823,
+        "verdict": "TB"
+      },
+      {
+        "filename": "tb_blind_04.jpg",
+        "true_label": "TB",
+        "tb_prob": 0.4581970796228941,
+        "verdict": "TB"
+      },
+      {
+        "filename": "tb_blind_05.jpg",
+        "true_label": "TB",
+        "tb_prob": 0.7571990386127126,
+        "verdict": "TB"
+      },
+      {
+        "filename": "tb_blind_06.png",
+        "true_label": "TB",
+        "tb_prob": 0.1389586766404423,
+        "verdict": "TB"
+      },
+      {
+        "filename": "tb_blind_07.jpg",
+        "true_label": "TB",
+        "tb_prob": 0.07165459548986428,
+        "verdict": "NO_TB"
+      },
+      {
+        "filename": "tb_blind_08.jpg",
+        "true_label": "TB",
+        "tb_prob": 0.8706174686004878,
+        "verdict": "TB"
+      },
+      {
+        "filename": "tb_blind_09.jpeg",
+        "true_label": "TB",
+        "tb_prob": 0.04263723261514459,
+        "verdict": "NO_TB"
+      },
+      {
+        "filename": "tb_blind_10.jpeg",
+        "true_label": "TB",
+        "tb_prob": 0.09737297599170458,
+        "verdict": "NO_TB"
+      },
+      {
+        "filename": "tb_blind_11.jpg",
+        "true_label": "TB",
+        "tb_prob": 0.9680910812832642,
+        "verdict": "TB"
+      },
+      {
+        "filename": "notb_blind_01.png",
+        "true_label": "NO_TB",
+        "tb_prob": 0.006743187695377258,
+        "verdict": "NO_TB"
+      },
+      {
+        "filename": "notb_blind_02.png",
+        "true_label": "NO_TB",
+        "tb_prob": 0.033052627852999714,
+        "verdict": "NO_TB"
+      },
+      {
+        "filename": "notb_blind_03.png",
+        "true_label": "NO_TB",
+        "tb_prob": 0.004016190417711334,
+        "verdict": "NO_TB"
+      },
+      {
+        "filename": "notb_blind_04.png",
+        "true_label": "NO_TB",
+        "tb_prob": 0.00262421898384633,
+        "verdict": "NO_TB"
+      },
+      {
+        "filename": "notb_blind_05.png",
+        "true_label": "NO_TB",
+        "tb_prob": 0.005358727865701433,
+        "verdict": "NO_TB"
+      },
+      {
+        "filename": "notb_blind_06.png",
+        "true_label": "NO_TB",
+        "tb_prob": 0.0035382920087381003,
+        "verdict": "NO_TB"
+      },
+      {
+        "filename": "notb_blind_07.png",
+        "true_label": "NO_TB",
+        "tb_prob": 0.03684828610297828,
+        "verdict": "NO_TB"
+      },
+      {
+        "filename": "notb_blind_08.png",
+        "true_label": "NO_TB",
+        "tb_prob": 0.15509243767392755,
+        "verdict": "TB"
+      },
+      {
+        "filename": "notb_blind_09.png",
+        "true_label": "NO_TB",
+        "tb_prob": 0.004251178457070398,
+        "verdict": "NO_TB"
+      },
+      {
+        "filename": "notb_blind_10.png",
+        "true_label": "NO_TB",
+        "tb_prob": 0.0242562943731257,
+        "verdict": "NO_TB"
+      },
+      {
+        "filename": "notb_blind_11.png",
+        "true_label": "NO_TB",
+        "tb_prob": 0.010104018470826523,
+        "verdict": "NO_TB"
+      },
+      {
+        "filename": "notb_blind_12.png",
+        "true_label": "NO_TB",
+        "tb_prob": 0.003520954446429357,
+        "verdict": "NO_TB"
+      }
+    ],
+    "strict_sens": 0.7272727272727273,
+    "strict_sens_ci": [
+      0.4444444444444444,
+      1.0
+    ],
+    "strict_spec": 0.9166666666666666,
+    "effective_sens_with_abstain": 0.7272727272727273,
+    "tp_fn_fp_tn_abstain": [
+      8,
+      3,
+      1,
+      11,
+      0
+    ]
+  },
+  "lodo_eval_slice": {
+    "n_eval": 10473,
+    "strict_sens": 0.9584824624194703,
+    "strict_spec": 0.6454385191714411,
+    "abstain_rate": 0.0,
+    "tp_fn_fp_tn": [
+      1339,
+      58,
+      3218,
+      5858
+    ]
+  },
+  "nih_per_finding": {}
+}
