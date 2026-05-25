@@ -41,7 +41,7 @@ export function ZonalBars({ scores }: ZonalBarsProps): JSX.Element {
         per-zone calibrated TB probability (sigmoid(zone_logit / T))
       </div>
       {rows.length === 0 ? (
-        <p className="text-[11px] text-muted/80">
+        <p className="text-[11px] text-muted">
           Zone evidence not available for this run (the lung segmenter returned an empty mask, or
           the engine ran with zero-zone supervision).
         </p>

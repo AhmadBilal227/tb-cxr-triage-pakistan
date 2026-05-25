@@ -24,7 +24,7 @@
  * model echoed from the response, the schema version, and the load-bearing
  * "Narrative interpretation only — does not change the verdict." sentence.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Download, FileText, Loader2 } from 'lucide-react';
 import { Button } from '../ui/button';
 import type { Adjudication } from '@/lib/types';
@@ -65,11 +65,6 @@ const INITIAL: ReportState = {
   error: null,
   startedAt: null,
 };
-
-/** Expected single-call duration in ms. The progress bar asymptotes here. */
-const EXPECTED_LATENCY_MS = 10_000;
-/** Progress cap before the response actually arrives. */
-const PROGRESS_CAP_PCT = 90;
 
 export function ClinicianReport({
   apiKey,
@@ -254,7 +249,11 @@ export function ClinicianReport({
 }
 
 // =====================================================================
-// LoadingState — spinner + elapsed counter + animated progress bar
+// LoadingState — spinner + honest elapsed counter + indeterminate bar.
+// We do NOT fake a percentage: the GPT call is a single opaque request
+// with no progress events, so a determinate bar would be dishonest (and
+// the project's whole ethos is honesty). The indeterminate bar says
+// "working"; the elapsed counter is real measured time.
 // =====================================================================
 function LoadingState({
   startedAt,
@@ -264,26 +263,12 @@ function LoadingState({
   onCancel: () => void;
 }): JSX.Element {
   const [elapsedMs, setElapsedMs] = useState(0);
-  const rafRef = useRef<number | null>(null);
-
   useEffect(() => {
     if (startedAt === null) return;
-    const tick = (): void => {
-      setElapsedMs(Date.now() - startedAt);
-      rafRef.current = requestAnimationFrame(tick);
-    };
-    rafRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-    };
+    const id = window.setInterval(() => setElapsedMs(Date.now() - startedAt), 100);
+    return () => window.clearInterval(id);
   }, [startedAt]);
-
-  // Easing toward the cap: progress = cap * (1 - exp(-3 * t / expected))
-  // Reaches ~85% at the expected duration, asymptotes to the cap.
-  const t = Math.max(0, elapsedMs) / EXPECTED_LATENCY_MS;
-  const eased = 1 - Math.exp(-3 * t);
-  const progress = Math.min(PROGRESS_CAP_PCT, PROGRESS_CAP_PCT * eased);
-  const elapsedSeconds = (elapsedMs / 1000).toFixed(1);
+  const elapsed = (elapsedMs / 1000).toFixed(1);
 
   return (
     <div data-testid="clinician-report-loading" className="space-y-2">
@@ -292,26 +277,18 @@ function LoadingState({
         <span className="font-mono text-[10px] uppercase tracking-wide text-muted">
           drafting radiology report…
         </span>
-        <span className="ml-auto font-mono text-[10px] text-muted">
-          {elapsedSeconds}s / ~10s
-        </span>
+        <span className="ml-auto font-mono text-[10px] text-muted">{elapsed}s elapsed</span>
       </div>
       <div
-        className="h-1.5 w-full overflow-hidden rounded bg-surface-2"
+        className="h-1 w-full overflow-hidden rounded bg-surface-2"
         role="progressbar"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(progress)}
         aria-label="Drafting radiology report"
       >
-        <div
-          className="h-full bg-provider-openai transition-[width] duration-200 ease-out"
-          style={{ width: `${progress}%` }}
-        />
+        <div className="h-full w-1/3 rounded bg-provider-openai animate-indeterminate" />
       </div>
       <div className="flex items-center justify-between">
         <p className="text-[10px] text-muted">
-          Single call to gpt-5.5 vision. Cap at 90% until response arrives.
+          gpt-5.5 vision, typically 5-15s. Does not change the verdict.
         </p>
         <Button variant="ghost" size="sm" onClick={onCancel}>
           Cancel

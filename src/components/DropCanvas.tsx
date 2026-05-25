@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { ImageUp, Sparkles } from 'lucide-react';
+import { ImageUp, FlaskConical } from 'lucide-react';
 import type { BBox } from '@/lib/providers/parsers';
 import { cn } from '@/lib/utils';
 
@@ -46,9 +46,9 @@ export function DropCanvas({
           </button>
           <button
             onClick={onSample}
-            className="inline-flex items-center gap-1.5 text-sm text-muted/70 hover:text-muted"
+            className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-offwhite"
           >
-            <Sparkles className="h-3.5 w-3.5" /> Synthetic sample
+            <FlaskConical className="h-3.5 w-3.5" /> Synthetic sample
           </button>
         </div>
 
@@ -77,7 +77,7 @@ export function DropCanvas({
                 </button>
               ))}
             </div>
-            <p className="mt-2 text-[10px] text-muted/60">
+            <p className="mt-2 text-[10px] text-muted">
               Real CXRs from public Hugging Face datasets · research/educational use only.
             </p>
           </div>

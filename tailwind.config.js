@@ -47,10 +47,18 @@ export default {
           '0%': { opacity: '0' },
           '100%': { opacity: '1' },
         },
+        // Indeterminate progress: a segment slides across the track. Uses
+        // transform only (composited, no layout thrash) per the design law
+        // against animating layout properties.
+        indeterminate: {
+          '0%': { transform: 'translateX(-120%)' },
+          '100%': { transform: 'translateX(320%)' },
+        },
       },
       animation: {
         shimmer: 'shimmer 1.6s ease-in-out infinite',
         'fade-in': 'fade-in 0.3s ease-out',
+        indeterminate: 'indeterminate 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite',
       },
     },
   },

@@ -37,12 +37,12 @@ export function PathologyList({ pathologies }: PathologyListProps): JSX.Element 
       <div className="font-mono text-[10px] uppercase tracking-wide text-muted">
         TorchXRayVision pathology scores
       </div>
-      <p className="text-[10px] leading-snug text-muted/80">
+      <p className="text-[10px] leading-snug text-muted">
         Other findings the perception backbone sees, used as input features to the TB head. Not
         independent diagnoses.
       </p>
       {items.length === 0 ? (
-        <p className="text-[11px] text-muted/80">No pathology scores in this run.</p>
+        <p className="text-[11px] text-muted">No pathology scores in this run.</p>
       ) : (
         <ul className="flex flex-wrap gap-1.5" data-testid="pathology-chip-list">
           {items.map(([label, value]) => {

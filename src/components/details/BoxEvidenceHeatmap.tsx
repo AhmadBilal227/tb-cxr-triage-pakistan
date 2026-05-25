@@ -107,7 +107,7 @@ export function BoxEvidenceHeatmap({
         </div>
       </div>
       <p
-        className="text-[10px] leading-snug text-muted/80"
+        className="text-[10px] leading-snug text-muted"
         data-testid="box-evidence-caption"
       >
         {caption}

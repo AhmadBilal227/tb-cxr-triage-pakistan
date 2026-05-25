@@ -72,7 +72,8 @@
   .skeleton,
   .animate-shimmer,
   .animate-fade-in,
-  .animate-spin {
+  .animate-spin,
+  .animate-indeterminate {
     animation: none !important;
   }
   *,
