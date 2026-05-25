@@ -1,0 +1,6 @@
+
+===== HOLDOUT-vs-TRAINING OVERLAP AUDIT 2026-05-25T14:30:57Z =====
+train rows hashed: 13260  |  holdout rows hashed: 3008
+policy: md5-exact + pHash-256 hamming<=6
+cross-set matches found: 0
+  CLEAN: zero overlap. Holdout validity preserved.
