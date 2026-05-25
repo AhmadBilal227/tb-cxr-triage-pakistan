@@ -10,6 +10,20 @@
 
 ---
 
+## ⚠️ PLAN CORRECTION (2026-05-25, post external Pakistani eval) — READ BEFORE EXECUTING P0.5 + P1
+
+The external blind eval on the Mendeley Pakistani cohort (3,008 images, AUROC 0.781 external vs 0.922 LODO, **specificity 0.675** the failure mode — 1 in 3 normals false-flagged) changes two things in this plan:
+
+1. **The Mendeley Pakistani cohort is the EXTERNAL VALIDATION HOLDOUT, NOT training data.** It is our only well-powered external TB+ set (2,494 positives). Tasks P0.5.2 and P1.4 below say to train on `mendeley_pk` — **OVERRIDE: do NOT add `mendeley_pk` to the training `--sources`.** Register it in `build_index.py` (P0.5.2) but tag it `split='external_holdout'` and exclude it from training. It becomes the standing external eval set that P1/P2/P3 measure generalization against (a site the model never trained on).
+
+2. **The eval surfaced a NEW failure mode distinct from M24:** specificity drift on normals (the model over-flags normals on a new site), separate from M24's sensitivity-on-atypical-TB. The biggest immediately-available lever for specificity drift is **negative-class diversity** — add NIH ChestX-ray14 `No_Finding` (5,788 diverse US normals, already extracted in `data/features_nih14.npz`) to the P1 training NEGATIVE pool. So P1's corrected training sources are: `mont, shen, qatar, tbx11k` (original TB+/normal) **+ nih14 No_Finding normals as extra negatives**. TB+ diversity from PadChest/VinDr joins when their DUAs land. **Pakistani stays held-out.**
+
+3. **P1's evaluation** uses the locked P0 protocol on the LODO eval slice + the held-out Pakistani cohort. The GO gate is now: does the head fix + negative diversity improve the **Pakistani external specificity** (currently 0.675) without dropping LODO sens — measured against the frozen P0 baseline on the same held-out Pakistani set.
+
+Every task below executes as written EXCEPT the `--sources` composition (exclude mendeley_pk, add nih14-normals) and the eval target (add Pakistani-holdout). The agent executing P0.5/P1 must honor this correction over the original task text.
+
+---
+
 ## File Structure
 
 ### New files
