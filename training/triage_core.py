@@ -292,6 +292,7 @@ class TriageEngine:
         *,
         use_tta: bool = False,
         use_locked_protocol: bool = False,
+        head_kind: str = "zonal-softor",
     ) -> None:
         # Force the HF cache to be the sole source — no silent network fetches at runtime.
         # Set BEFORE the transformers import path triggers any cache lookup downstream.
@@ -375,7 +376,11 @@ class TriageEngine:
         # Architecture (d_tok=768, d_cls=768, d_txrv=1042) and lever set MUST match how
         # the .pt was saved by train_tb.py — i.e. the full {fusion, zonal, box} blend.
         d_tok, d_cls, d_txrv = 768, 768, 1042
-        self.head_t2 = TBHeadT2(d_tok, d_cls, d_txrv, frozenset({"fusion", "zonal", "box"})).to(DEVICE)
+        # head_kind defaults to 'zonal-softor' (the deployed M22/M24 head) for backward compat;
+        # 'soft-attn-pool' loads a P1 SoftAttnPool artifact instead (same lever set, ONE lever swap).
+        self.head_kind = head_kind
+        self.head_t2 = TBHeadT2(d_tok, d_cls, d_txrv, frozenset({"fusion", "zonal", "box"}),
+                                head_kind=head_kind).to(DEVICE)
         self.head_t2.load_state_dict(torch.load(_HEAD_T2_PATH, map_location=DEVICE))
         self.head_t2.eval()
         self.head_seq = InactiveSequelaeHead(d_tok, d_cls).to(DEVICE)

@@ -1,0 +1,262 @@
+{
+  "meta": {
+    "locked_T": 1.5914955557015147,
+    "locked_thr": 0.6104530692100525,
+    "locked_borderline_low": 0.2,
+    "locked_git_sha": "73b9a53ec5bea6d61c5e9bc5d2d1821accf5a63f",
+    "frozen_baseline": {
+      "pakistani": {
+        "auroc": 0.781,
+        "sens": 0.753,
+        "spec": 0.675
+      },
+      "lodo_eval": {
+        "sens": 0.846,
+        "spec": 0.909
+      }
+    }
+  },
+  "configs": {
+    "A": {
+      "head_kind": "zonal-softor",
+      "mixstyle_p": 0.0,
+      "with_nih": false,
+      "pakistani": {
+        "auroc": 0.7544800127309435,
+        "sens": 0.8801989150090416,
+        "spec": 0.20327868852459016,
+        "ece": 0.13031675768978257,
+        "abstain_rate": 0.16323138297872342,
+        "tp_fn_fp_tn_abstain": [
+          1947,
+          265,
+          243,
+          62,
+          491
+        ],
+        "n": 3008,
+        "n_pos": 2494,
+        "n_neg": 514,
+        "auroc_ci": [
+          0.7362448253774702,
+          0.7723502385276895
+        ],
+        "local_recal_secondary": {
+          "sens_median": 0.9488977955911824,
+          "spec_median": 0.0267639902676399
+        }
+      },
+      "lodo_eval": {
+        "auroc": 0.9232150963801107,
+        "sens": 0.8796372629843363,
+        "spec": 0.8864326490951051,
+        "ece": 0.09374109046433665,
+        "abstain_rate": 0.09806168242146472,
+        "tp_fn_fp_tn_abstain": [
+          1067,
+          146,
+          935,
+          7298,
+          1027
+        ],
+        "n": 10473,
+        "n_pos": 1397,
+        "n_neg": 9076,
+        "auroc_ci": [
+          0.9165619315867489,
+          0.9299260209159016
+        ]
+      }
+    },
+    "B": {
+      "head_kind": "zonal-softor",
+      "mixstyle_p": 0.0,
+      "with_nih": true,
+      "pakistani": {
+        "auroc": 0.7643043693970588,
+        "sens": 0.8602833414753297,
+        "spec": 0.4489795918367347,
+        "ece": 0.15845625210199443,
+        "abstain_rate": 0.22174202127659576,
+        "tp_fn_fp_tn_abstain": [
+          1761,
+          286,
+          162,
+          132,
+          667
+        ],
+        "n": 3008,
+        "n_pos": 2494,
+        "n_neg": 514,
+        "auroc_ci": [
+          0.746021982061977,
+          0.7820473384114563
+        ],
+        "local_recal_secondary": {
+          "sens_median": 0.9471442885771543,
+          "spec_median": 0.08150851581508517
+        }
+      },
+      "lodo_eval": {
+        "auroc": 0.8912952675458619,
+        "sens": 0.7138211382113822,
+        "spec": 0.9479326186830015,
+        "ece": 0.06246443732832655,
+        "abstain_rate": 0.07199465291702473,
+        "tp_fn_fp_tn_abstain": [
+          878,
+          352,
+          442,
+          8047,
+          754
+        ],
+        "n": 10473,
+        "n_pos": 1397,
+        "n_neg": 9076,
+        "auroc_ci": [
+          0.8813937696875757,
+          0.9013867813598053
+        ]
+      }
+    },
+    "C": {
+      "head_kind": "soft-attn-pool",
+      "mixstyle_p": 0.0,
+      "with_nih": true,
+      "pakistani": {
+        "auroc": 0.623536955619557,
+        "sens": 0.936542669584245,
+        "spec": 0.04310344827586207,
+        "ece": 0.18524860503848783,
+        "abstain_rate": 0.08610372340425532,
+        "tp_fn_fp_tn_abstain": [
+          2140,
+          145,
+          444,
+          20,
+          259
+        ],
+        "n": 3008,
+        "n_pos": 2494,
+        "n_neg": 514,
+        "auroc_ci": [
+          0.6005157738739364,
+          0.6446864860635879
+        ],
+        "local_recal_secondary": {
+          "sens_median": 0.9493987975951903,
+          "spec_median": 0.030413625304136254
+        }
+      },
+      "lodo_eval": {
+        "auroc": 0.8682582348437264,
+        "sens": 0.7164658634538152,
+        "spec": 0.9177715606373921,
+        "ece": 0.08915396931623035,
+        "abstain_rate": 0.09615200993029695,
+        "tp_fn_fp_tn_abstain": [
+          892,
+          353,
+          676,
+          7545,
+          1007
+        ],
+        "n": 10473,
+        "n_pos": 1397,
+        "n_neg": 9076,
+        "auroc_ci": [
+          0.8573926943299617,
+          0.8794042102554027
+        ]
+      }
+    },
+    "D": {
+      "head_kind": "soft-attn-pool",
+      "mixstyle_p": 0.5,
+      "with_nih": true,
+      "pakistani": {
+        "auroc": 0.7756740691277744,
+        "sens": 0.9209833187006146,
+        "spec": 0.21703296703296704,
+        "ece": 0.12070824678600364,
+        "abstain_rate": 0.12167553191489362,
+        "tp_fn_fp_tn_abstain": [
+          2098,
+          180,
+          285,
+          79,
+          366
+        ],
+        "n": 3008,
+        "n_pos": 2494,
+        "n_neg": 514,
+        "auroc_ci": [
+          0.7579170275590551,
+          0.7938431655201259
+        ],
+        "local_recal_secondary": {
+          "sens_median": 0.9473947895791583,
+          "spec_median": 0.09124087591240876
+        }
+      },
+      "lodo_eval": {
+        "auroc": 0.9286835922724292,
+        "sens": 0.7807660961695192,
+        "spec": 0.9517692397524232,
+        "ece": 0.046071715375996386,
+        "abstain_rate": 0.06521531557337916,
+        "tp_fn_fp_tn_abstain": [
+          958,
+          269,
+          413,
+          8150,
+          683
+        ],
+        "n": 10473,
+        "n_pos": 1397,
+        "n_neg": 9076,
+        "auroc_ci": [
+          0.9212972591335563,
+          0.9363413733158253
+        ]
+      },
+      "attention_diagnostic": {
+        "n_missed_tb": 396,
+        "attn_com_row_mean": 4.014960076832213,
+        "attn_com_row_note": "0=apex .. 7=base; ZonalSoftOR carries a +0.4 upper-zone (apex) prior. A higher COM row on missed atypical-TB = SoftAttnPool attends mid/lower lung."
+      }
+    }
+  },
+  "paired_delta_vs_A": {
+    "B": {
+      "pakistani_spec_delta_ci": [
+        0.11716901154401152,
+        0.1984130882215361
+      ],
+      "pakistani_auroc_delta_ci": [
+        -0.001561696533267759,
+        0.02198102385301746
+      ]
+    },
+    "C": {
+      "pakistani_spec_delta_ci": [
+        -0.433579696148524,
+        -0.3465323358178514
+      ],
+      "pakistani_auroc_delta_ci": [
+        -0.14661291555809836,
+        -0.11460849592550312
+      ]
+    },
+    "D": {
+      "pakistani_spec_delta_ci": [
+        -0.12620779428920728,
+        -0.037698412698412676
+      ],
+      "pakistani_auroc_delta_ci": [
+        0.007648573972786141,
+        0.034226919684631325
+      ]
+    }
+  }
+}

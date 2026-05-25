@@ -1,0 +1,55 @@
+LOCKED protocol (FROZEN, never re-fit): T=1.5915 thr=0.6105 borderline_low=0.20
+  git_sha=73b9a53ec5bea6d61c5e9bc5d2d1821accf5a63f
+Pakistani holdout: n=3008 pos=2494 neg=514
+
+===== CONFIG A: head=zonal-softor mixstyle_p=0.0 nih=False =====
+  training corpus: n=13092 pos=1747 neg=11345 sources={'montgomery': 138, 'qatar': 4193, 'shenzhen': 662, 'tbx11k': 8099}
+  -- LODO OOF over the 4 original sources (eval surface fixed across rungs) --
+   OOF holdout=montgomery   n=  138 filled [cleaner external]
+   OOF holdout=shenzhen     n=  662 filled [cleaner external]
+   OOF holdout=qatar        n= 4193 filled [LEAKAGE-PRONE re-mix]
+   OOF holdout=tbx11k       n= 8099 filled [LEAKAGE-PRONE re-mix]
+  -- full-corpus model -> score held-out Pakistani --
+  PAKISTANI: AUROC=0.754 [0.7362448253774702, 0.7723502385276895] sens=0.880 spec=0.203 ece=0.130 abstain=0.163
+  LODO-EVAL: AUROC=0.923 sens=0.880 spec=0.886 ece=0.094 (n=10473)
+
+===== CONFIG B: head=zonal-softor mixstyle_p=0.0 nih=True =====
+nih14_normals: 5788 diverse US normals added as label-0 (No_Finding==1)
+  training corpus: n=18880 pos=1747 neg=17133 sources={'montgomery': 138, 'nih14_normals': 5788, 'qatar': 4193, 'shenzhen': 662, 'tbx11k': 8099}
+  -- LODO OOF over the 4 original sources (eval surface fixed across rungs) --
+   OOF holdout=montgomery   n=  138 filled [cleaner external]
+   OOF holdout=shenzhen     n=  662 filled [cleaner external]
+   OOF holdout=qatar        n= 4193 filled [LEAKAGE-PRONE re-mix]
+   OOF holdout=tbx11k       n= 8099 filled [LEAKAGE-PRONE re-mix]
+  -- full-corpus model -> score held-out Pakistani --
+  PAKISTANI: AUROC=0.764 [0.746021982061977, 0.7820473384114563] sens=0.860 spec=0.449 ece=0.158 abstain=0.222
+  LODO-EVAL: AUROC=0.891 sens=0.714 spec=0.948 ece=0.062 (n=10473)
+
+===== CONFIG C: head=soft-attn-pool mixstyle_p=0.0 nih=True =====
+nih14_normals: 5788 diverse US normals added as label-0 (No_Finding==1)
+  training corpus: n=18880 pos=1747 neg=17133 sources={'montgomery': 138, 'nih14_normals': 5788, 'qatar': 4193, 'shenzhen': 662, 'tbx11k': 8099}
+  -- LODO OOF over the 4 original sources (eval surface fixed across rungs) --
+   OOF holdout=montgomery   n=  138 filled [cleaner external]
+   OOF holdout=shenzhen     n=  662 filled [cleaner external]
+   OOF holdout=qatar        n= 4193 filled [LEAKAGE-PRONE re-mix]
+   OOF holdout=tbx11k       n= 8099 filled [LEAKAGE-PRONE re-mix]
+  -- full-corpus model -> score held-out Pakistani --
+  PAKISTANI: AUROC=0.624 [0.6005157738739364, 0.6446864860635879] sens=0.937 spec=0.043 ece=0.185 abstain=0.086
+  LODO-EVAL: AUROC=0.868 sens=0.716 spec=0.918 ece=0.089 (n=10473)
+
+===== CONFIG D: head=soft-attn-pool mixstyle_p=0.5 nih=True =====
+nih14_normals: 5788 diverse US normals added as label-0 (No_Finding==1)
+  training corpus: n=18880 pos=1747 neg=17133 sources={'montgomery': 138, 'nih14_normals': 5788, 'qatar': 4193, 'shenzhen': 662, 'tbx11k': 8099}
+  -- LODO OOF over the 4 original sources (eval surface fixed across rungs) --
+   OOF holdout=montgomery   n=  138 filled [cleaner external]
+   OOF holdout=shenzhen     n=  662 filled [cleaner external]
+   OOF holdout=qatar        n= 4193 filled [LEAKAGE-PRONE re-mix]
+   OOF holdout=tbx11k       n= 8099 filled [LEAKAGE-PRONE re-mix]
+  -- full-corpus model -> score held-out Pakistani --
+  PAKISTANI: AUROC=0.776 [0.7579170275590551, 0.7938431655201259] sens=0.921 spec=0.217 ece=0.121 abstain=0.122
+  LODO-EVAL: AUROC=0.929 sens=0.781 spec=0.952 ece=0.046 (n=10473)
+  Δ vs A  B: PK spec Δ95%CI [+0.117,+0.198]  PK AUROC Δ95%CI [-0.002,+0.022]
+  Δ vs A  C: PK spec Δ95%CI [-0.434,-0.347]  PK AUROC Δ95%CI [-0.147,-0.115]
+  Δ vs A  D: PK spec Δ95%CI [-0.126,-0.038]  PK AUROC Δ95%CI [+0.008,+0.034]
+
+Wrote data/p1_ablation.json

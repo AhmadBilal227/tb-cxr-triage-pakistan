@@ -621,10 +621,16 @@ def main(mode: str = "main") -> None:
 def _load_index(mode: str) -> tuple[pd.DataFrame, Path]:
     """Return (index_df, output_npz_path) for the requested extraction mode.
 
-    'main'     -> data/index_dedup.csv             -> data/features.npz
-    'sequelae' -> data/index_tbx_latent.csv DEDUPED to unique image paths -> data/features_sequelae.npz
-                  (the inactive-sequelae specificity probe: 239 rows but 169 UNIQUE images; all label 1,
-                   source 'tbx11k_sequelae', no boxes — kept OUT of the main features.npz)."""
+    'main'             -> data/index_dedup.csv             -> data/features.npz
+    'sequelae'         -> data/index_tbx_latent.csv DEDUPED to unique image paths -> data/features_sequelae.npz
+                          (the inactive-sequelae specificity probe: 239 rows but 169 UNIQUE images; all
+                           label 1, source 'tbx11k_sequelae', no boxes — kept OUT of features.npz).
+    'external_holdout' -> data/index_external_holdout.csv  -> data/features_mendeley_pk.npz
+                          (P1 prerequisite: the held-out Pakistani cohort, label 1 = TB+ / 0 = normal,
+                           source 'mendeley_pk'. Extracting features here is a FROZEN-BACKBONE READ — the
+                           cohort STILL never enters training; it is the standing external eval set. The
+                           identical pipeline (rad-dino-base + TXRV + zones, same harmonize/letterbox/crop)
+                           guarantees a PAIRED comparison against the training-set features.)"""
     if mode == "sequelae":
         p = DATA / "index_tbx_latent.csv"
         if not p.exists():
@@ -635,6 +641,14 @@ def _load_index(mode: str) -> tuple[pd.DataFrame, Path]:
         df["source"] = "tbx11k_sequelae"
         df["bbox"] = "[]"  # sequelae boxes are NOT activity supervision (ethos) -> no grid_label
         return df, DATA / "features_sequelae.npz"
+    if mode == "external_holdout":
+        p = DATA / "index_external_holdout.csv"
+        if not p.exists():
+            raise SystemExit(f"missing {p} — run build_index.py first (registers mendeley_pk holdout)")
+        df = pd.read_csv(p).reset_index(drop=True)
+        if "bbox" not in df.columns:  # Pakistani normals/TB carry no localization boxes -> no grid_label
+            df["bbox"] = "[]"
+        return df, DATA / "features_mendeley_pk.npz"
     p = DATA / "index_dedup.csv"
     if not p.exists():
         raise SystemExit(f"missing {p} — run build_index.py + dedup.py first")
@@ -643,8 +657,9 @@ def _load_index(mode: str) -> tuple[pd.DataFrame, Path]:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Dual-backbone frozen feature extraction.")
-    ap.add_argument("--mode", choices=["main", "sequelae"], default="main",
+    ap.add_argument("--mode", choices=["main", "sequelae", "external_holdout"], default="main",
                     help="'main' = the LODO binary set -> features.npz; "
-                         "'sequelae' = the 169-image inactive-sequelae probe -> features_sequelae.npz")
+                         "'sequelae' = the 169-image inactive-sequelae probe -> features_sequelae.npz; "
+                         "'external_holdout' = the held-out Pakistani cohort -> features_mendeley_pk.npz")
     args = ap.parse_args()
     main(args.mode)
