@@ -29,6 +29,10 @@ function mockOnnxAdjudication(verdict: Verdict): Adjudication {
   return { ...mockAdjudication(verdict), perception_path: 'onnx-primary' };
 }
 
+function mockLocalAdjudication(verdict: Verdict): Adjudication {
+  return { ...mockAdjudication(verdict), perception_path: 'local-onnx-via-server' };
+}
+
 function mockVlmAdjudication(verdict: Verdict): Adjudication {
   return {
     ...mockAdjudication(verdict),
@@ -179,6 +183,69 @@ describe('VerdictCard VLM-primary disclosure (Milestone 21 default path)', () =>
     );
     expect(html).toContain('data-testid="vlm-primary-disclosure"');
     expect(html).not.toContain(DISCLOSURE_FRAGMENT);
+  });
+});
+
+/**
+ * Track A — LOCAL-MODE disclosure honesty.
+ *
+ * The external blind eval on the Pakistani cohort (Kiran/Jabeen, 3,008 images)
+ * measured AUROC 0.78 / sens 0.75 / spec 0.68 at the shipped operating point —
+ * MUCH lower than the in-distribution LODO 0.92 / 0.80 / 0.91. The local-mode
+ * disclosure must LEAD with the external number (the honest field estimate) and
+ * frame the in-distribution numbers as a ceiling, never as the headline. It must
+ * also mandate per-site re-validation/re-calibration. Pin all of this so the
+ * disclosure can never silently regress to advertising the in-distribution
+ * numbers as if they were the field expectation.
+ */
+describe('VerdictCard local-mode disclosure — Track A external-first honesty', () => {
+  for (const verdict of ['tb', 'no_tb', 'abstain'] as const) {
+    it(`leads with the external estimate (verdict=${verdict}, path=local-onnx-via-server)`, () => {
+      const html = renderToStaticMarkup(
+        <VerdictCard
+          adjudication={mockLocalAdjudication(verdict)}
+          ensemble={mockEnsemble()}
+          rag={mockRag()}
+          fallbackRate={0}
+          onDisagree={async () => undefined}
+        />,
+      );
+      expect(html).toContain('data-testid="local-mode-disclosure"');
+      // Leads with the EXTERNAL field estimate (Pakistani cohort).
+      expect(html).toContain('external site');
+      expect(html).toContain('Pakistani cohort');
+      expect(html).toContain('0.78');
+      expect(html).toContain('honest field estimate');
+      // In-distribution numbers are framed as a CEILING, not the headline.
+      expect(html).toContain('upper bound');
+      expect(html).toContain('0.92');
+      // The re-validate / re-calibrate mandate must be present.
+      expect(html).toMatch(/re-validate/i);
+      expect(html).toMatch(/re-calibrate/i);
+      // The VLM disclosure must NOT leak onto the local path.
+      expect(html).not.toContain('general-purpose vision-language model');
+      // Hostile-reader tone check — no marketing language.
+      expect(html).not.toMatch(/guarantee|comprehensive|robust/i);
+    });
+  }
+
+  it('does NOT present the in-distribution 0.922 / 0.800 / 0.911 as the headline', () => {
+    const html = renderToStaticMarkup(
+      <VerdictCard
+        adjudication={mockLocalAdjudication('tb')}
+        ensemble={mockEnsemble()}
+        rag={mockRag()}
+        fallbackRate={0}
+        onDisagree={async () => undefined}
+      />,
+    );
+    // The old in-distribution-first copy is gone. The external estimate must
+    // appear BEFORE the in-distribution ceiling in the rendered markup.
+    expect(html).not.toContain('0.800 / specificity 0.911');
+    const extIdx = html.indexOf('external site');
+    const idIdx = html.indexOf('upper bound');
+    expect(extIdx).toBeGreaterThanOrEqual(0);
+    expect(idIdx).toBeGreaterThan(extIdx);
   });
 });
 

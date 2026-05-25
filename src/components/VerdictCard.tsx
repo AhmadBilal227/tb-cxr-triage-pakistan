@@ -349,14 +349,15 @@ function PerceptionPathDisclosure({
 }): JSX.Element {
   const path = adjudication.perception_path ?? 'vlm-primary';
 
-  // Milestone 22 — LOCAL-MODE path. The user's M4 actually ran the full validated
+  // Milestone 22 / Track A — LOCAL-MODE path. The user's M4 ran the full validated
   // pipeline (Rad-DINO + TXRV + TBHeadT2 + InactiveSequelaeHead under their
-  // calibrated temperatures) and we OWN those numbers. Replace the M21 generic-
-  // VLM disclosure with the LODO sensitivity/specificity/AUROC plus the M18
-  // NIH-stress mimic FPR caveat (~10% on scar-shaped findings, measured).
-  // The "general-purpose VLM" line MUST NOT appear here — that disclosure is
-  // wrong for the local-mode pathway and would lie about what produced the
-  // verdict.
+  // calibrated temperatures). Track A reframe: the external blind eval on the
+  // Pakistani cohort (Kiran/Jabeen, 3,008 images) measured AUROC 0.78 / sens 0.75 /
+  // spec 0.68 at the shipped 0.6105 operating point. That is the HONEST field
+  // estimate and MUST lead. The in-distribution LODO numbers (AUROC 0.92 /
+  // sens 0.80 / spec 0.91) are an UPPER BOUND on held-out folds of the training
+  // cohorts, not what to expect at a new site, so they are framed as a ceiling.
+  // The "general-purpose VLM" line MUST NOT appear here.
   if (path === 'local-onnx-via-server') {
     const verifierRan = adjudication.vlm_audit?.consistency_check_ran ?? false;
     const verifierDisagreed = adjudication.vlm_audit?.consistency_check_disagreed ?? false;
@@ -371,11 +372,14 @@ function PerceptionPathDisclosure({
           className="mt-1 px-1 text-[10px] leading-snug text-muted"
           data-testid="local-mode-disclosure"
         >
-          This result is produced by the validated Rad-DINO + TorchXRayVision research model
-          running on your machine. Reported LODO sensitivity 0.800 / specificity 0.911 /
-          AUROC 0.922 on 13,092 held-out predictions; per-site recalibration recommended.
-          Higher false-positive rate (~10%) expected on radiographically scar-shaped findings
-          (healed fibrosis, pleural thickening — M18 NIH stress). Not a medical device.
+          This result is from the project's trained Rad-DINO + TorchXRayVision model. On a
+          genuinely new external site (Pakistani cohort, 3,008 images) it measured AUROC 0.78,
+          sensitivity 0.75, specificity 0.68 at the shipped operating point — the honest field
+          estimate. The in-distribution numbers (AUROC 0.92, sens 0.80, spec 0.91) are an upper
+          bound on held-out folds of the training cohorts, NOT what you should expect at your
+          site. Re-validate and re-calibrate on local labeled cases before trusting
+          sensitivity/specificity here. Research triage support, clinician-supervised — not a
+          diagnosis.
         </div>
         <div
           className="mt-1 px-1 font-mono text-[9px] uppercase tracking-wider text-muted"
