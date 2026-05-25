@@ -1,0 +1,579 @@
+{
+  "meta": {
+    "deployed_pk_auroc": 0.781,
+    "probe": "StandardScaler + LogisticRegression(L2, C=1.0, balanced)",
+    "fit_only_on_source": true,
+    "pk_eval_fit_population": "seed=7 cal slice (matches P2.0)",
+    "n_source": 13092,
+    "n_fit_rows": 2619,
+    "n_pk": 3008,
+    "fit_population_sensitivity": {
+      "raw_max_pk_auroc_full_corpus": 0.8122708508201786,
+      "raw_max_pk_auroc_cal_slice": 0.8534888401424119,
+      "p2_0_reported": 0.8535,
+      "note": "P2.0 fit on the seed=7 cal slice (n=2619); this battery matches that for PK-eval checks. Full-corpus fit is a reference. A large cal-vs-full gap means the 0.853 partly rode the small fit sample."
+    }
+  },
+  "check1_lodo_replay": {
+    "max": {
+      "folds": {
+        "montgomery": {
+          "auroc": 0.6890086206896552,
+          "auroc_ci": [
+            0.5979575661000502,
+            0.7824519879397926
+          ],
+          "pauc_fpr20": 0.6988745210727969,
+          "pauc_fpr20_ci": [
+            0.6303817175099306,
+            0.7719660098132319
+          ],
+          "sens_at_spec70": 0.5517241379310345,
+          "sens_at_spec70_ci": [
+            0.43859649122807015,
+            0.6981132075471698
+          ],
+          "n": 138,
+          "n_pos": 58,
+          "n_neg": 80,
+          "n_patients": 138
+        },
+        "shenzhen": {
+          "auroc": 0.8112857873210634,
+          "auroc_ci": [
+            0.7782062183840279,
+            0.8425219012974721
+          ],
+          "pauc_fpr20": 0.7223287321063395,
+          "pauc_fpr20_ci": [
+            0.6884818361040039,
+            0.7577087529930446
+          ],
+          "sens_at_spec70": 0.7559523809523809,
+          "sens_at_spec70_ci": [
+            0.6925065835238,
+            0.8259589057839926
+          ],
+          "n": 662,
+          "n_pos": 336,
+          "n_neg": 326,
+          "n_patients": 662
+        },
+        "qatar": {
+          "auroc": 0.8151997526283239,
+          "auroc_ci": [
+            0.7949014934378186,
+            0.8337367140771607
+          ],
+          "pauc_fpr20": 0.7583224535605488,
+          "pauc_fpr20_ci": [
+            0.7391813630397748,
+            0.7765600173793722
+          ],
+          "sens_at_spec70": 0.7489177489177489,
+          "sens_at_spec70_ci": [
+            0.7132862144987681,
+            0.7787243456976087
+          ],
+          "n": 4193,
+          "n_pos": 693,
+          "n_neg": 3500,
+          "n_patients": 4193
+        },
+        "tbx11k": {
+          "auroc": 0.8282782795015622,
+          "auroc_ci": [
+            0.8115357674157577,
+            0.8455227682014019
+          ],
+          "pauc_fpr20": 0.7311062636039112,
+          "pauc_fpr20_ci": [
+            0.7126953730704884,
+            0.74935889804885
+          ],
+          "sens_at_spec70": 0.7909090909090909,
+          "sens_at_spec70_ci": [
+            0.7609022556390977,
+            0.8223512385146999
+          ],
+          "n": 8099,
+          "n_pos": 660,
+          "n_neg": 7439,
+          "n_patients": 8099
+        }
+      },
+      "macro_mean_auroc": 0.7859431100351513,
+      "patient_weighted_mean_auroc": 0.8217623532932653
+    },
+    "mean": {
+      "folds": {
+        "montgomery": {
+          "auroc": 0.7443965517241379,
+          "auroc_ci": [
+            0.6514235267140565,
+            0.8325602643287864
+          ],
+          "pauc_fpr20": 0.7294061302681992,
+          "pauc_fpr20_ci": [
+            0.6591077273095916,
+            0.8054665128680704
+          ],
+          "sens_at_spec70": 0.6724137931034483,
+          "sens_at_spec70_ci": [
+            0.5517065446868402,
+            0.8030365126676601
+          ],
+          "n": 138,
+          "n_pos": 58,
+          "n_neg": 80,
+          "n_patients": 138
+        },
+        "shenzhen": {
+          "auroc": 0.812308282208589,
+          "auroc_ci": [
+            0.7809695347879785,
+            0.842486649198587
+          ],
+          "pauc_fpr20": 0.7458369851007888,
+          "pauc_fpr20_ci": [
+            0.7124656765290499,
+            0.7796589426074685
+          ],
+          "sens_at_spec70": 0.7797619047619048,
+          "sens_at_spec70_ci": [
+            0.7104380464541199,
+            0.8303662393640842
+          ],
+          "n": 662,
+          "n_pos": 336,
+          "n_neg": 326,
+          "n_patients": 662
+        },
+        "qatar": {
+          "auroc": 0.8888220985363842,
+          "auroc_ci": [
+            0.8724448611247073,
+            0.9033312274465951
+          ],
+          "pauc_fpr20": 0.8230559563892897,
+          "pauc_fpr20_ci": [
+            0.8055890448559517,
+            0.8407589846752551
+          ],
+          "sens_at_spec70": 0.8787878787878788,
+          "sens_at_spec70_ci": [
+            0.8504865128161991,
+            0.901716519527833
+          ],
+          "n": 4193,
+          "n_pos": 693,
+          "n_neg": 3500,
+          "n_patients": 4193
+        },
+        "tbx11k": {
+          "auroc": 0.8638952368149841,
+          "auroc_ci": [
+            0.8502232379620729,
+            0.8774801191230573
+          ],
+          "pauc_fpr20": 0.7532159430936148,
+          "pauc_fpr20_ci": [
+            0.7347884228719179,
+            0.7720887498122719
+          ],
+          "sens_at_spec70": 0.8469696969696969,
+          "sens_at_spec70_ci": [
+            0.8205108359133126,
+            0.8776129142217136
+          ],
+          "n": 8099,
+          "n_pos": 660,
+          "n_neg": 7439,
+          "n_patients": 8099
+        }
+      },
+      "macro_mean_auroc": 0.8273555423210237,
+      "patient_weighted_mean_auroc": 0.8680104941252391
+    },
+    "cls": {
+      "folds": {
+        "montgomery": {
+          "auroc": 0.819396551724138,
+          "auroc_ci": [
+            0.7443306881663921,
+            0.8901345624456678
+          ],
+          "pauc_fpr20": 0.7533524904214559,
+          "pauc_fpr20_ci": [
+            0.6798423850263519,
+            0.8293835228954124
+          ],
+          "sens_at_spec70": 0.7241379310344828,
+          "sens_at_spec70_ci": [
+            0.5964912280701754,
+            0.8461864406779659
+          ],
+          "n": 138,
+          "n_pos": 58,
+          "n_neg": 80,
+          "n_patients": 138
+        },
+        "shenzhen": {
+          "auroc": 0.8959428863569969,
+          "auroc_ci": [
+            0.871620807585278,
+            0.917883066990878
+          ],
+          "pauc_fpr20": 0.8417618154964781,
+          "pauc_fpr20_ci": [
+            0.8112078962249385,
+            0.8694806388200689
+          ],
+          "sens_at_spec70": 0.8690476190476191,
+          "sens_at_spec70_ci": [
+            0.8190501529559192,
+            0.9062594126506024
+          ],
+          "n": 662,
+          "n_pos": 336,
+          "n_neg": 326,
+          "n_patients": 662
+        },
+        "qatar": {
+          "auroc": 0.8936198721913009,
+          "auroc_ci": [
+            0.8782063530631633,
+            0.9080805883332139
+          ],
+          "pauc_fpr20": 0.825544561258847,
+          "pauc_fpr20_ci": [
+            0.8071985357084625,
+            0.8423942962977666
+          ],
+          "sens_at_spec70": 0.8874458874458875,
+          "sens_at_spec70_ci": [
+            0.8596445811273746,
+            0.9105196325922321
+          ],
+          "n": 4193,
+          "n_pos": 693,
+          "n_neg": 3500,
+          "n_patients": 4193
+        },
+        "tbx11k": {
+          "auroc": 0.9187366337117648,
+          "auroc_ci": [
+            0.9077136818790614,
+            0.9292574679379139
+          ],
+          "pauc_fpr20": 0.8360355583436644,
+          "pauc_fpr20_ci": [
+            0.8196797540555505,
+            0.8525919946873862
+          ],
+          "sens_at_spec70": 0.9303030303030303,
+          "sens_at_spec70_ci": [
+            0.9112757199276906,
+            0.9514452512517246
+          ],
+          "n": 8099,
+          "n_pos": 660,
+          "n_neg": 7439,
+          "n_patients": 8099
+        }
+      },
+      "macro_mean_auroc": 0.8819239859960502,
+      "patient_weighted_mean_auroc": 0.9084927463669393
+    }
+  },
+  "check2_channel_ablation": {
+    "curve": [
+      {
+        "dropped_top": 0,
+        "n_channels": 768,
+        "pk_auroc": 0.8534888401424119,
+        "dropped_channel_ids": []
+      },
+      {
+        "dropped_top": 1,
+        "n_channels": 767,
+        "pk_auroc": 0.861642260491327,
+        "dropped_channel_ids": [
+          735
+        ]
+      },
+      {
+        "dropped_top": 5,
+        "n_channels": 763,
+        "pk_auroc": 0.8713160612707853,
+        "dropped_channel_ids": [
+          735,
+          353,
+          621,
+          56,
+          595
+        ]
+      },
+      {
+        "dropped_top": 10,
+        "n_channels": 758,
+        "pk_auroc": 0.833212160547181,
+        "dropped_channel_ids": [
+          735,
+          353,
+          621,
+          56,
+          595,
+          184,
+          611,
+          224,
+          700,
+          387
+        ]
+      },
+      {
+        "dropped_top": 20,
+        "n_channels": 748,
+        "pk_auroc": 0.8001631932201486,
+        "dropped_channel_ids": [
+          735,
+          353,
+          621,
+          56,
+          595,
+          184,
+          611,
+          224,
+          700,
+          387,
+          730,
+          761,
+          267,
+          314,
+          465,
+          661,
+          643,
+          669,
+          96,
+          163
+        ]
+      }
+    ],
+    "base_pk_auroc": 0.8534888401424119,
+    "drop5_delta": 0.017827221128373427,
+    "drop5_retained_frac": 1.020887468341588
+  },
+  "check3_alt_pools": {
+    "max": {
+      "auroc": 0.8534888401424119,
+      "auroc_ci": [
+        0.8384204128483439,
+        0.8680896059805335
+      ],
+      "pauc_fpr20": 0.7948366178265798,
+      "pauc_fpr20_ci": [
+        0.7735203038496752,
+        0.8166864326157149
+      ],
+      "sens_at_spec70": 0.826383319967923,
+      "sens_at_spec70_ci": [
+        0.8040657203909968,
+        0.8509531076920074
+      ],
+      "n": 3008,
+      "n_pos": 2494,
+      "n_neg": 514,
+      "n_patients": 3008
+    },
+    "p95": {
+      "auroc": 0.8130563937106643,
+      "auroc_ci": [
+        0.7962233753622704,
+        0.8297311245040533
+      ],
+      "pauc_fpr20": 0.7571608089418929,
+      "pauc_fpr20_ci": [
+        0.7390973055191601,
+        0.776827307362034
+      ],
+      "sens_at_spec70": 0.7710505212510024,
+      "sens_at_spec70_ci": [
+        0.7339989033306255,
+        0.7978441892273556
+      ],
+      "n": 3008,
+      "n_pos": 2494,
+      "n_neg": 514,
+      "n_patients": 3008
+    },
+    "top8mean": {
+      "auroc": 0.80029814746052,
+      "auroc_ci": [
+        0.784527714137344,
+        0.8171210664122525
+      ],
+      "pauc_fpr20": 0.7647527433761476,
+      "pauc_fpr20_ci": [
+        0.7476257160606027,
+        0.7825305672576742
+      ],
+      "sens_at_spec70": 0.7497995188452286,
+      "sens_at_spec70_ci": [
+        0.7197604186787715,
+        0.7733789375242575
+      ],
+      "n": 3008,
+      "n_pos": 2494,
+      "n_neg": 514,
+      "n_patients": 3008
+    },
+    "lse": {
+      "auroc": 0.8554725894676407,
+      "auroc_ci": [
+        0.840867157042709,
+        0.8701021769376017
+      ],
+      "pauc_fpr20": 0.7984288968838659,
+      "pauc_fpr20_ci": [
+        0.7770383365783093,
+        0.8206667458917882
+      ],
+      "sens_at_spec70": 0.8199679230152366,
+      "sens_at_spec70_ci": [
+        0.7992011864856239,
+        0.8488033828846926
+      ],
+      "n": 3008,
+      "n_pos": 2494,
+      "n_neg": 514,
+      "n_patients": 3008
+    },
+    "wmax": {
+      "auroc": 0.8408967514252104,
+      "auroc_ci": [
+        0.8260594664164089,
+        0.8558643531636756
+      ],
+      "pauc_fpr20": 0.7939161206957226,
+      "pauc_fpr20_ci": [
+        0.7744286969703807,
+        0.8140130022461084
+      ],
+      "sens_at_spec70": 0.7995188452285485,
+      "sens_at_spec70_ci": [
+        0.7804564112878287,
+        0.8195235029002235
+      ],
+      "n": 3008,
+      "n_pos": 2494,
+      "n_neg": 514,
+      "n_patients": 3008
+    },
+    "mean": {
+      "auroc": 0.5932135958986393,
+      "auroc_ci": [
+        0.5721062234769694,
+        0.6140092280552043
+      ],
+      "pauc_fpr20": 0.6351607021572916,
+      "pauc_fpr20_ci": [
+        0.6189868424890512,
+        0.6510163446960999
+      ],
+      "sens_at_spec70": 0.5020048115477145,
+      "sens_at_spec70_ci": [
+        0.46695700708155946,
+        0.5266420979477233
+      ],
+      "n": 3008,
+      "n_pos": 2494,
+      "n_neg": 514,
+      "n_patients": 3008
+    }
+  },
+  "check4_token_norm": {
+    "raw_max": {
+      "auroc": 0.8534888401424119,
+      "auroc_ci": [
+        0.8384204128483439,
+        0.8680896059805335
+      ],
+      "pauc_fpr20": 0.7948366178265798,
+      "pauc_fpr20_ci": [
+        0.7735203038496752,
+        0.8166864326157149
+      ],
+      "sens_at_spec70": 0.826383319967923,
+      "sens_at_spec70_ci": [
+        0.8040657203909968,
+        0.8509531076920074
+      ],
+      "n": 3008,
+      "n_pos": 2494,
+      "n_neg": 514,
+      "n_patients": 3008
+    },
+    "l2norm_then_max": {
+      "auroc": 0.8281658080560661,
+      "auroc_ci": [
+        0.8115703910439043,
+        0.8441354115654541
+      ],
+      "pauc_fpr20": 0.7724270198324661,
+      "pauc_fpr20_ci": [
+        0.7518182649518906,
+        0.7938484338090205
+      ],
+      "sens_at_spec70": 0.7842822774659182,
+      "sens_at_spec70_ci": [
+        0.7498938225805849,
+        0.8216446854618691
+      ],
+      "n": 3008,
+      "n_pos": 2494,
+      "n_neg": 514,
+      "n_patients": 3008
+    },
+    "lift_retained_auroc_delta": 0.9283625698730863
+  },
+  "check5_site_prediction": {
+    "site_4way": {
+      "cv_accuracy_mean": 0.9534069214481586,
+      "cv_accuracy_std": 0.0020575949861794405,
+      "majority_class_chance": 0.6186220592728384,
+      "n_folds": 5
+    },
+    "pakistani_vs_source": {
+      "auroc": 0.9996098600087109,
+      "n_test": 8050,
+      "note": "held-out-patient AUROC for PK-vs-source membership from the max-pool readout"
+    }
+  },
+  "synthesis": {
+    "verdict": "MIXED \u2014 the MAX-readout claim does NOT survive (mean/CLS beat max on clean source-LODO); some directional signal survives robust pooling + token-norm, but the MAX-specific external lift is a PK-specific / selection effect, not a general property of max-pooling",
+    "signals_for_real_count": 3,
+    "decisive_check1_lodo": {
+      "max_weighted": 0.8217623532932653,
+      "mean_weighted": 0.8680104941252391,
+      "cls_weighted": 0.9084927463669393,
+      "max_wins_on_source_lodo": false
+    },
+    "check3_robust_pools": {
+      "min_robust_pk_auroc": 0.80029814746052,
+      "robust_holds_near_ceiling": true
+    },
+    "check4_token_norm": {
+      "l2norm_then_max_pk_auroc": 0.8281658080560661,
+      "survives": true
+    },
+    "check2_ablation": {
+      "drop5_retained_frac": 1.020887468341588,
+      "graceful": true
+    },
+    "check5_site": {
+      "site_4way_acc": 0.9534069214481586,
+      "site_4way_chance": 0.6186220592728384,
+      "pk_vs_source_auroc": 0.9996098600087109
+    }
+  }
+}

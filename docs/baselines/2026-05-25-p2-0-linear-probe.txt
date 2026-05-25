@@ -1,0 +1,36 @@
+Training corpus (4 src): n=13092 probe-train(cal)=2619 lodo-eval=10473
+Pakistani holdout: n=3008 pos=2494 neg=514 patients=3008
+Deployed-head external ceiling for the gate: PK AUROC=0.781 (materially-higher margin = +0.05)
+
+===== GATE BRANCH cls =====
+  PAKISTANI: AUROC=0.604 [0.5816907981907395, 0.6271508296811605] pAUC(FPR<=.2)=0.602 sens@spec.70=0.488
+  LODO-EVAL: AUROC=0.986 [0.9833456147642983, 0.98912548528556] pAUC(FPR<=.2)=0.970 sens@spec.70=0.990
+
+===== GATE BRANCH txrv =====
+  PAKISTANI: AUROC=0.599 [0.5706050935410255, 0.6275084376930182] pAUC(FPR<=.2)=0.513 sens@spec.70=0.414
+  LODO-EVAL: AUROC=0.958 [0.9511131114664807, 0.9631397249562795] pAUC(FPR<=.2)=0.917 sens@spec.70=0.965
+
+===== GATE BRANCH fused =====
+  PAKISTANI: AUROC=0.605 [0.5804252155139408, 0.6302112006916141] pAUC(FPR<=.2)=0.561 sens@spec.70=0.460
+  LODO-EVAL: AUROC=0.991 [0.9884005300258603, 0.9931374105464151] pAUC(FPR<=.2)=0.979 sens@spec.70=0.994
+
+===== DIAGNOSTIC BRANCH patch_mean (post-hoc) =====
+  PAKISTANI: AUROC=0.593 [0.5721062234769694, 0.6140092280552043] pAUC(FPR<=.2)=0.635 sens@spec.70=0.502
+  LODO-EVAL: AUROC=0.990 [0.9875194200712796, 0.9929804451345764] pAUC(FPR<=.2)=0.980 sens@spec.70=0.994
+
+===== DIAGNOSTIC BRANCH patch_max (post-hoc) =====
+  PAKISTANI: AUROC=0.853 [0.8384204128483439, 0.8680896059805335] pAUC(FPR<=.2)=0.795 sens@spec.70=0.826
+  LODO-EVAL: AUROC=0.981 [0.9774889814240949, 0.9843780832510777] pAUC(FPR<=.2)=0.958 sens@spec.70=0.989
+
+===== DIAGNOSTIC BRANCH cls_patchmax_txrv (post-hoc) =====
+  PAKISTANI: AUROC=0.633 [0.6098306264745038, 0.6587338165879002] pAUC(FPR<=.2)=0.576 sens@spec.70=0.521
+  LODO-EVAL: AUROC=0.994 [0.9926025997783043, 0.9958834017091578] pAUC(FPR<=.2)=0.987 sens@spec.70=0.999
+
+======================================================================
+GATE P2.0 (literal): PROCEED
+  best probe PK AUROC=0.605 (branch=fused, CI_lo=0.580) vs deployed ceiling 0.781. Not materially higher: the rad-dino representation caps near the deployed external ceiling -> backbone is a candidate lever -> PROCEED to P2.1.
+GATE P2.0 (honest):  INCONCLUSIVE (gate misspecified)
+  patch_max PK AUROC=0.853 [0.8384204128483439, 0.8680896059805335]. GATE MISSPECIFIED: the CLS/fused gate branches collapsed externally (best 0.605 << deployed 0.781) while a patch-MAX (OR-style) probe recovers >= the deployed external AUROC (0.853). The deployed head ALREADY pools patch tokens via soft-OR, so the CLS probe is the wrong discriminator. The literal PROCEED rests on a misspecified probe; the honest label is INCONCLUSIVE. The rad-dino representation DOES hold ~deployed-level external signal in its spatial tokens -> the lever is plausibly POOLING/head/training, not the backbone FAMILY. maira-2 (same DINO family) is therefore LOWER-priority than head/pooling work. Surface to the coordinator before extracting maira-2.
+======================================================================
+
+Wrote data/p2_linear_probe.json
