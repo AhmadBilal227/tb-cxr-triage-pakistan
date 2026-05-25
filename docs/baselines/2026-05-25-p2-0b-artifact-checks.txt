@@ -1,0 +1,52 @@
+source corpus n=13092 pos=1747 neg=11345
+PK holdout    n=3008 pos=2494 neg=514
+probe fit population = seed=7 cal slice (n=2619), matching P2.0
+
+fit-population sensitivity: cal-slice PK AUROC=0.853 (P2.0=0.853) | full-corpus PK AUROC=0.812
+
+===== CHECK 1: LODO-replay (leave-one-SOURCE-out, NO Pakistani) =====
+  max   macro=0.786 wmean=0.822
+       montgomery  AUROC=0.689 [0.5979575661000502, 0.7824519879397926] (n_pat=138, pos=58)
+       shenzhen    AUROC=0.811 [0.7782062183840279, 0.8425219012974721] (n_pat=662, pos=336)
+       qatar       AUROC=0.815 [0.7949014934378186, 0.8337367140771607] (n_pat=4193, pos=693)
+       tbx11k      AUROC=0.828 [0.8115357674157577, 0.8455227682014019] (n_pat=8099, pos=660)
+  mean  macro=0.827 wmean=0.868
+       montgomery  AUROC=0.744 [0.6514235267140565, 0.8325602643287864] (n_pat=138, pos=58)
+       shenzhen    AUROC=0.812 [0.7809695347879785, 0.842486649198587] (n_pat=662, pos=336)
+       qatar       AUROC=0.889 [0.8724448611247073, 0.9033312274465951] (n_pat=4193, pos=693)
+       tbx11k      AUROC=0.864 [0.8502232379620729, 0.8774801191230573] (n_pat=8099, pos=660)
+  cls   macro=0.882 wmean=0.908
+       montgomery  AUROC=0.819 [0.7443306881663921, 0.8901345624456678] (n_pat=138, pos=58)
+       shenzhen    AUROC=0.896 [0.871620807585278, 0.917883066990878] (n_pat=662, pos=336)
+       qatar       AUROC=0.894 [0.8782063530631633, 0.9080805883332139] (n_pat=4193, pos=693)
+       tbx11k      AUROC=0.919 [0.9077136818790614, 0.9292574679379139] (n_pat=8099, pos=660)
+
+===== CHECK 2: channel ablation (drop top-|coef| max channels) =====
+  drop_top= 0 n_ch=768 PK_AUROC=0.853
+  drop_top= 1 n_ch=767 PK_AUROC=0.862
+  drop_top= 5 n_ch=763 PK_AUROC=0.871
+  drop_top=10 n_ch=758 PK_AUROC=0.833
+  drop_top=20 n_ch=748 PK_AUROC=0.800
+  drop5 retained frac=1.021
+
+===== CHECK 3: alternative pools (outlier sensitivity), PK =====
+  max       PK_AUROC=0.853 [0.8384204128483439, 0.8680896059805335]
+  p95       PK_AUROC=0.813 [0.7962233753622704, 0.8297311245040533]
+  top8mean  PK_AUROC=0.800 [0.784527714137344, 0.8171210664122525]
+  lse       PK_AUROC=0.855 [0.840867157042709, 0.8701021769376017]
+  wmax      PK_AUROC=0.841 [0.8260594664164089, 0.8558643531636756]
+  mean      PK_AUROC=0.593 [0.5721062234769694, 0.6140092280552043]
+
+===== CHECK 4: token L2-norm before max, PK =====
+  raw_max          PK_AUROC=0.853 [0.8384204128483439, 0.8680896059805335]
+  l2norm_then_max  PK_AUROC=0.828 [0.8115703910439043, 0.8441354115654541]
+
+===== CHECK 5: negative control — predict SITE not TB =====
+  site 4-way CV acc=0.953 (chance=0.619)
+  PK-vs-source AUROC=1.000
+
+======================================================================
+VERDICT: MIXED — the MAX-readout claim does NOT survive (mean/CLS beat max on clean source-LODO); some directional signal survives robust pooling + token-norm, but the MAX-specific external lift is a PK-specific / selection effect, not a general property of max-pooling  (signals-for-real=3/4)
+======================================================================
+
+Wrote data/p2_artifact_checks.json
