@@ -184,16 +184,43 @@ class BoxEvidence(nn.Module):
 class TBHeadT2(nn.Module):
     """T2 sharpening head: zonal soft-OR + box-evidence + pathology-grounded fusion, fused by a
     learned log-odds blend. `levers` selects which channels are active (for the ablation):
-    a set drawn from {"zonal", "box", "fusion"}; "fusion" is always on (it carries CLS+TXRV)."""
+    a set drawn from {"zonal", "box", "fusion"}; "fusion" is always on (it carries CLS+TXRV).
 
-    def __init__(self, d_tok: int, d_cls: int, d_txrv: int, levers: frozenset[str]):
+    `head_kind` (P1) selects the patch-pooling mechanism for the "zonal" lever slot:
+      - 'zonal-softor'   (default, backward-compatible M22/M24 deployed head): per-zone gated
+        attention + floored zone gate + logsumexp soft-OR over 7 hard zones (ZonalSoftOR).
+      - 'soft-attn-pool' (P1 surgical fix): a single learned non-zonal attention pool over the
+        64 patch tokens (SoftAttnPool) -> a small LayerNorm+Linear scorer -> the channel logit.
+        Removes the hard zone-prior partition the M24 diagnosis blamed for attenuating mid-lung
+        consolidative TB. Occupies the SAME blend slot w[0] so the fusion + box channels and the
+        log-odds blend are byte-for-byte identical to the deployed head — ONE lever changes.
+    `mixstyle_p` (P1): probability of feature-space MixStyle on the patch tokens per training
+    forward (0.0 = identity = backward-compatible)."""
+
+    def __init__(self, d_tok: int, d_cls: int, d_txrv: int, levers: frozenset[str],
+                 head_kind: str = "zonal-softor", mixstyle_p: float = 0.0):
         super().__init__()
         self.levers = levers
+        self.head_kind = head_kind
         self.use_zonal = "zonal" in levers
         self.use_box = "box" in levers
         d_pooled = d_txrv - N_TXRV_LOGITS  # 1024 pooled TXRV features (the 18 logits are split off)
-        self.zonal = ZonalSoftOR(d_tok) if self.use_zonal else None
+        # The "zonal" lever slot holds EITHER the deployed ZonalSoftOR OR the P1 SoftAttnPool.
+        self.zonal = None
+        self.soft_attn_pool = None
+        self.attn_scorer = None
+        if self.use_zonal:
+            if head_kind == "soft-attn-pool":
+                from heads.soft_attn_pool import SoftAttnPool
+                self.soft_attn_pool = SoftAttnPool(d_in=d_tok, d_hidden=128)
+                # turn the pooled (B, d_tok) vector into a channel logit (parallels ZonalSoftOR's scorer)
+                self.attn_scorer = nn.Sequential(nn.LayerNorm(d_tok), nn.Linear(d_tok, 1))
+            else:
+                self.zonal = ZonalSoftOR(d_tok)
         self.box = BoxEvidence(d_tok) if self.use_box else None
+        # feature-space MixStyle on the patch tokens (identity at p=0 or in eval mode)
+        from mixstyle import MixStyle
+        self.mixstyle = MixStyle(p=mixstyle_p) if mixstyle_p > 0.0 else nn.Identity()
         # named-finding embedding of the 18 TXRV logits (equal footing, not diluted in 1042-d)
         self.find_embed = nn.Sequential(nn.Linear(N_TXRV_LOGITS, 32), nn.GELU())
         d_fuse = d_cls + d_pooled + 32
@@ -204,10 +231,13 @@ class TBHeadT2(nn.Module):
         # aux distillation head: re-predict the 18 TXRV logits from CLS (anchors rep in named findings)
         self.distill = nn.Sequential(nn.LayerNorm(d_cls), nn.Linear(d_cls, 64), nn.GELU(),
                                      nn.Linear(64, N_TXRV_LOGITS))
-        # learned log-odds blend over the active channels (zonal, box, fusion). init equal-ish.
+        # learned log-odds blend over the active channels (zonal/attn, box, fusion). init equal-ish.
         self.blend = nn.Parameter(torch.zeros(3))
 
     def forward(self, cls: torch.Tensor, patches: torch.Tensor, txrv: torch.Tensor) -> dict:
+        # MixStyle augments the patch tokens IN TRAINING ONLY (identity at p=0 / eval). The box and
+        # attention channels both read the (possibly mixed) patches; fusion reads CLS+TXRV (untouched).
+        patches = self.mixstyle(patches)
         pooled = txrv[:, : txrv.shape[1] - N_TXRV_LOGITS]  # [B,1024]
         find_logits = txrv[:, txrv.shape[1] - N_TXRV_LOGITS :]  # [B,18] named-finding logits
         fuse_in = torch.cat([cls, pooled, self.find_embed(find_logits)], dim=1)
@@ -221,6 +251,11 @@ class TBHeadT2(nn.Module):
         if self.zonal is not None:
             zonal_logit, zone_logits = self.zonal(patches, self._zones)
             logit = logit + w[0] * zonal_logit
+        elif self.soft_attn_pool is not None and self.attn_scorer is not None:
+            pooled_tok, attn = self.soft_attn_pool(patches)  # (B,d_tok), (B,T)
+            self._last_attn = attn  # store for diagnostic attention-map surfacing
+            attn_logit = self.attn_scorer(pooled_tok).squeeze(-1)  # [B]
+            logit = logit + w[0] * attn_logit
         if self.box is not None:
             box_logit, evidence = self.box(patches)
             logit = logit + w[1] * box_logit
@@ -229,6 +264,7 @@ class TBHeadT2(nn.Module):
 
     # zones are passed via an attribute set just before forward (keeps the predict() signature stable)
     _zones: torch.Tensor
+    _last_attn: torch.Tensor
 
 
 # ---------------------------------------------------------------------------
@@ -531,9 +567,11 @@ def _tv_prior(ev_map: torch.Tensor) -> torch.Tensor:
 
 
 def train_head_t2(arrs: dict, y: np.ndarray, tr: np.ndarray, va: np.ndarray, levers: frozenset[str],
-                  max_epochs: int = 80, patience: int = 8, seed: int = SEED) -> TBHeadT2:
+                  max_epochs: int = 80, patience: int = 8, seed: int = SEED,
+                  head_kind: str = "zonal-softor", mixstyle_p: float = 0.0) -> TBHeadT2:
     rng = np.random.default_rng(seed)
-    model = TBHeadT2(arrs["patches"].shape[2], arrs["cls"].shape[1], arrs["txrv"].shape[1], levers).to(DEVICE)
+    model = TBHeadT2(arrs["patches"].shape[2], arrs["cls"].shape[1], arrs["txrv"].shape[1], levers,
+                     head_kind=head_kind, mixstyle_p=mixstyle_p).to(DEVICE)
     n_pos = max(1, int((y[tr] == 1).sum()))
     n_neg = max(1, int((y[tr] == 0).sum()))
     img_loss = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([n_neg / n_pos], device=DEVICE))  # no smoothing
@@ -730,7 +768,8 @@ def run_lodo(arrs: dict, y: np.ndarray, src: np.ndarray, groups: np.ndarray | No
 
 
 def run_lodo_t2(arrs: dict, y: np.ndarray, src: np.ndarray, groups: np.ndarray | None,
-                levers: frozenset[str], tag: str | None = None) -> tuple[float, list[dict]]:
+                levers: frozenset[str], tag: str | None = None,
+                head_kind: str = "zonal-softor", mixstyle_p: float = 0.0) -> tuple[float, list[dict]]:
     """LODO for the T2 head. `levers` (subset of {zonal, box, fusion}) selects active channels for the
     ablation. Mirrors run_lodo's honest reporting (cold-start + recal, bootstrap AUC CI, ECE, dup-cluster
     guard, worst-fold gate). Box supervision is 100% TBX11K — so per fold we flag whether the box lever
@@ -751,7 +790,8 @@ def run_lodo_t2(arrs: dict, y: np.ndarray, src: np.ndarray, groups: np.ndarray |
             leak = np.array([g in te_groups and g >= 0 for g in groups[tr_all]])
             tr_all = tr_all[~leak]
         tr, va = train_test_split(tr_all, test_size=0.2, stratify=y[tr_all], random_state=SEED)
-        model = train_head_t2(arrs, y, tr, va, levers, seed=SEED + fold_index)
+        model = train_head_t2(arrs, y, tr, va, levers, seed=SEED + fold_index,
+                              head_kind=head_kind, mixstyle_p=mixstyle_p)
         T = fit_temperature(predict_logits_t2(model, arrs, va), y[va])
         thr = threshold_for_sensitivity(y[va], predict_t2(model, arrs, va, T))
         pte = predict_t2(model, arrs, te, T)
@@ -887,6 +927,29 @@ def _parse_sources_flag(argv: list[str]) -> list[str] | None:
     return [s.strip() for s in argv[i + 1].split(",") if s.strip()]
 
 
+def _parse_head_flag(argv: list[str]) -> str:
+    """Parse `--head zonal-softor|soft-attn-pool` (default zonal-softor, backward-compatible)."""
+    if "--head" not in argv:
+        return "zonal-softor"
+    i = argv.index("--head")
+    if i + 1 >= len(argv):
+        raise SystemExit("--head requires a value (zonal-softor|soft-attn-pool)")
+    v = argv[i + 1].strip()
+    if v not in ("zonal-softor", "soft-attn-pool"):
+        raise SystemExit(f"--head must be zonal-softor or soft-attn-pool, got {v!r}")
+    return v
+
+
+def _parse_mixstyle_p_flag(argv: list[str]) -> float:
+    """Parse `--mixstyle-p <float>` (default 0.0 = no MixStyle = backward-compatible)."""
+    if "--mixstyle-p" not in argv:
+        return 0.0
+    i = argv.index("--mixstyle-p")
+    if i + 1 >= len(argv):
+        raise SystemExit("--mixstyle-p requires a float value")
+    return float(argv[i + 1])
+
+
 def main() -> None:
     random.seed(SEED)
     np.random.seed(SEED)
@@ -914,13 +977,41 @@ def main() -> None:
         if groups is not None:
             new_groups = np.arange(len(ex_y)) + int(groups.max()) + 1
             groups = np.concatenate([groups, new_groups])
+    head_kind = _parse_head_flag(sys.argv)
+    mixstyle_p = _parse_mixstyle_p_flag(sys.argv)
     print("ENDPOINT: radiographic-TB-pattern (NOT bacteriologically-confirmed active TB). Research preview.")
     print("sources:", {s: int((src == s).sum()) for s in sorted(set(src.tolist()))})
     print(f"total {len(y)}  pos={int((y==1).sum())}  neg={int((y==0).sum())}  "
           f"dup-cluster guard={'ON' if groups is not None else 'OFF (no group column)'}")
+    print(f"head={head_kind}  mixstyle_p={mixstyle_p}")
     print(f"PRIOR-FIXED T2 knobs (NOT tuned on test folds): g_min={G_MIN} zone_prior_init={ZONE_PRIOR_INIT} "
           f"r0={R0} (cap {R_MAX}) lambda_box={LAMBDA_BOX} lambda_distill={LAMBDA_DISTILL} "
           f"lambda_tv={LAMBDA_TV} distill_T={DISTILL_T}")
+
+    # ---- SMOKE: 1 fold, few epochs, the chosen head+mixstyle. Fast sanity, NOT a measurement. ----
+    if "--smoke" in sys.argv:
+        sources = sorted(set(src.tolist()))
+        ho = sources[0]
+        te = np.where(src == ho)[0]
+        tr_all = np.where(src != ho)[0]
+        if groups is not None:
+            te_groups = set(int(x) for x in groups[te] if x >= 0)
+            leak = np.array([g in te_groups and g >= 0 for g in groups[tr_all]])
+            tr_all = tr_all[~leak]
+        tr, va = train_test_split(tr_all, test_size=0.2, stratify=y[tr_all], random_state=SEED)
+        # tiny budget: small train subset + few epochs so the smoke run stays under ~10 min on M4
+        rng_sub = np.random.default_rng(SEED)
+        if len(tr) > 1024:
+            tr = rng_sub.choice(tr, size=1024, replace=False)
+        model = train_head_t2(arrs, y, tr, va, frozenset({"fusion", "zonal", "box"}),
+                              max_epochs=5, patience=5, seed=SEED,
+                              head_kind=head_kind, mixstyle_p=mixstyle_p)
+        pte = predict_t2(model, arrs, te)
+        auroc = roc_auc_score(y[te], pte) if len(np.unique(y[te])) > 1 else float("nan")
+        print(f"SMOKE head={head_kind} mixstyle_p={mixstyle_p} holdout={ho} AUROC={auroc:.3f} "
+              f"(non-NaN={not np.isnan(auroc)})")
+        assert not np.isnan(auroc), "smoke AUROC is NaN — the new code path is broken"
+        return
 
     # ---- BASELINE (the drift-log "before": fusion-only vs fusion+attention) ----
     auc_fo, _ = run_lodo(arrs, y, src, groups, use_patches=False)
@@ -940,7 +1031,8 @@ def main() -> None:
         ]
         t2_results: dict[str, tuple[float, list[dict]]] = {}
         for name, lev in ablation:
-            t2_results[name] = run_lodo_t2(arrs, y, src, groups, lev, tag=name)
+            t2_results[name] = run_lodo_t2(arrs, y, src, groups, lev, tag=name,
+                                           head_kind=head_kind, mixstyle_p=mixstyle_p)
         full_auc, full_ops = t2_results["T2[FULL]"]
         print_prevalence_table(full_ops)
 
@@ -962,7 +1054,8 @@ def main() -> None:
         # save the full T2 head trained on all data
         allidx = np.arange(len(y))
         tr, va = train_test_split(allidx, test_size=0.15, stratify=y, random_state=SEED)
-        model = train_head_t2(arrs, y, tr, va, frozenset({"fusion", "zonal", "box"}))
+        model = train_head_t2(arrs, y, tr, va, frozenset({"fusion", "zonal", "box"}),
+                              head_kind=head_kind, mixstyle_p=mixstyle_p)
         T = fit_temperature(predict_logits_t2(model, arrs, va), y[va])
         torch.save(model.state_dict(), DATA / "tb_head_t2.pt")
         thr = threshold_for_sensitivity(y[va], predict_t2(model, arrs, va, T))
