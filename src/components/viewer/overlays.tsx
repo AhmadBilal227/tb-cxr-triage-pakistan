@@ -39,7 +39,9 @@ export function HeatmapOverlay({
       {safe.map((row, r) =>
         row.map((v, c) => {
           const score = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
-          const alpha = score < NEAR_ZERO_FLOOR ? 0 : 0.5 * (0.3 + 0.7 * score);
+          // Peak ~0.4 so the radiograph stays legible through the overlay
+          // (the toggle still lets the reader remove it entirely).
+          const alpha = score < NEAR_ZERO_FLOOR ? 0 : 0.4 * (0.3 + 0.7 * score);
           return (
             <div
               key={`${r}-${c}`}
