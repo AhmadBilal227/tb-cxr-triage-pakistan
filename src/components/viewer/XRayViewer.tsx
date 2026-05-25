@@ -30,16 +30,54 @@ interface ViewTransform {
   ty: number;
 }
 
+export interface CropBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface XRayViewerProps {
   imageUrl: string;
   alt?: string;
   boxGrid?: ReadonlyArray<ReadonlyArray<number>> | null;
   zonalScores?: Record<string, number> | null;
+  /**
+   * The lung crop (+18% margin) in ORIGINAL image pixels that the model
+   * preprocessed. The 8x8 grid + zones were computed over the LETTERBOXED
+   * SQUARE of this crop, so we register the overlays to that square (not the
+   * whole image) to align them with the anatomy the model actually scored.
+   * When absent, overlays fall back to spanning the full image.
+   */
+  cropBox?: CropBox | null;
   /** When false, the overlay toggles render disabled ("after analysis"). */
   overlaysReady?: boolean;
   /** Tailwind size cap for the image, e.g. 'max-h-[70vh]'. */
   imageClassName?: string;
   className?: string;
+}
+
+/**
+ * Position (in % of the natural image box) for the overlay layer: the model's
+ * crop expanded to a centered square (the letterboxed footprint the grid
+ * spans). Falls back to the full image when crop or natural dims are missing.
+ */
+function overlayRectPct(
+  crop: CropBox | null | undefined,
+  natural: { w: number; h: number } | null,
+): { left: number; top: number; width: number; height: number } {
+  if (!crop || !natural || natural.w <= 0 || natural.h <= 0 || crop.w <= 0 || crop.h <= 0) {
+    return { left: 0, top: 0, width: 100, height: 100 };
+  }
+  const side = Math.max(crop.w, crop.h);
+  const sx = crop.x + crop.w / 2 - side / 2;
+  const sy = crop.y + crop.h / 2 - side / 2;
+  return {
+    left: (sx / natural.w) * 100,
+    top: (sy / natural.h) * 100,
+    width: (side / natural.w) * 100,
+    height: (side / natural.h) * 100,
+  };
 }
 
 const INITIAL: ViewTransform = { scale: 1, tx: 0, ty: 0 };
@@ -49,6 +87,7 @@ export function XRayViewer({
   alt = 'Chest radiograph under analysis',
   boxGrid,
   zonalScores,
+  cropBox,
   overlaysReady = false,
   imageClassName = 'max-h-[70vh] max-w-full',
   className,
@@ -57,6 +96,7 @@ export function XRayViewer({
   const [inverted, setInverted] = useState(false);
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [showZones, setShowZones] = useState(true);
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
 
@@ -142,12 +182,23 @@ export function XRayViewer({
             draggable={false}
             className={cn('block rounded-lg border border-border object-contain', imageClassName)}
             style={{ filter: inverted ? 'invert(1)' : undefined }}
+            onLoad={(e) =>
+              setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })
+            }
           />
-          {overlaysReady && showHeatmap && hasHeatmap && boxGrid && (
-            <HeatmapOverlay grid={boxGrid} />
-          )}
-          {overlaysReady && showZones && hasZones && zonalScores && (
-            <ZoneOverlay scores={zonalScores} />
+          {/* Overlays registered to the model's letterboxed crop square so the
+              grid + zones line up with the anatomy the model scored. */}
+          {overlaysReady && (showHeatmap || showZones) && (hasHeatmap || hasZones) && (
+            <div
+              className="pointer-events-none absolute"
+              style={(() => {
+                const r = overlayRectPct(cropBox, natural);
+                return { left: `${r.left}%`, top: `${r.top}%`, width: `${r.width}%`, height: `${r.height}%` };
+              })()}
+            >
+              {showHeatmap && hasHeatmap && boxGrid && <HeatmapOverlay grid={boxGrid} />}
+              {showZones && hasZones && zonalScores && <ZoneOverlay scores={zonalScores} />}
+            </div>
           )}
         </div>
       </div>

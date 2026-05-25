@@ -379,6 +379,7 @@ export default function App(): JSX.Element {
               onPickSample={(f) => void onPickSample(f)}
               boxGrid={enrichment?.box_evidence_grid ?? null}
               zonalScores={enrichment?.zonal_scores ?? null}
+              cropBox={enrichment?.crop_box ?? null}
               overlaysReady={overlaysReady}
             />
           </div>

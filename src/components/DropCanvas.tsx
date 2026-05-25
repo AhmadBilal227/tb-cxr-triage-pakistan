@@ -18,6 +18,7 @@ export function DropCanvas({
   onPickSample,
   boxGrid,
   zonalScores,
+  cropBox,
   overlaysReady,
 }: {
   imageUrl: string | null;
@@ -28,6 +29,8 @@ export function DropCanvas({
   /** BoxEvidence 8x8 grid + per-zone scores; drive the in-viewer overlays. */
   boxGrid?: ReadonlyArray<ReadonlyArray<number>> | null;
   zonalScores?: Record<string, number> | null;
+  /** Model crop in original-image pixels; registers the overlays to the scored region. */
+  cropBox?: { x: number; y: number; w: number; h: number } | null;
   /** Overlay toggles render disabled until analysis has produced the evidence. */
   overlaysReady?: boolean;
 }): JSX.Element {
@@ -93,6 +96,7 @@ export function DropCanvas({
       imageUrl={imageUrl}
       boxGrid={boxGrid}
       zonalScores={zonalScores}
+      cropBox={cropBox}
       overlaysReady={overlaysReady}
       imageClassName="max-h-[70vh] max-w-full"
     />

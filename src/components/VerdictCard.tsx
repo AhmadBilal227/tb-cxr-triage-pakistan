@@ -212,6 +212,7 @@ export function VerdictCard({
           boxGrid={boxGrid ?? null}
           zonalScores={zonalScores ?? null}
           txrvPathologies={txrvPathologies ?? null}
+          cropBox={enrichment?.crop_box ?? null}
           verdictLabel={meta.label}
         />
       )}

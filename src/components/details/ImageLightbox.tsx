@@ -49,6 +49,7 @@ export interface ImageLightboxProps {
   boxGrid?: ReadonlyArray<ReadonlyArray<number>> | null;
   zonalScores?: Record<string, number> | null;
   txrvPathologies?: Record<string, number> | null;
+  cropBox?: { x: number; y: number; w: number; h: number } | null;
   verdictLabel?: string;
 }
 
@@ -59,6 +60,7 @@ export function ImageLightbox({
   boxGrid,
   zonalScores,
   txrvPathologies,
+  cropBox,
   verdictLabel,
 }: ImageLightboxProps): JSX.Element {
   const [showPanel, setShowPanel] = useState(true);
@@ -119,6 +121,7 @@ export function ImageLightbox({
                 imageUrl={imageUrl}
                 boxGrid={boxGrid}
                 zonalScores={zonalScores}
+                cropBox={cropBox}
                 overlaysReady
                 imageClassName="max-h-[82vh] max-w-full"
               />
