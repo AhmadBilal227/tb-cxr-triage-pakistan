@@ -147,6 +147,43 @@ def test_latency_dict_has_all_stage_keys():
         assert res.latency_ms[k] >= 0, (k, res.latency_ms[k])
 
 
+def test_engine_supports_tta_mode() -> None:
+    """When use_tta=True the verdict is computed by averaging K_PASSES probs."""
+    from triage_core import TriageEngine
+    from tta import K_PASSES
+
+    eng = TriageEngine(use_tta=True)
+    sample_path = Path(__file__).parent.parent / 'public' / 'samples' / 'tb-sample-1.jpg'
+    if not sample_path.exists():
+        print('SKIP test_engine_supports_tta_mode — sample missing')
+        return
+    img_bytes = sample_path.read_bytes()
+    result = eng.run(img_bytes)
+    # tta_passes attribute should be populated to K_PASSES probabilities
+    assert hasattr(result, 'tta_passes')
+    assert result.tta_passes is not None
+    assert len(result.tta_passes) == K_PASSES
+    # baseline tb_prob should equal the TTA-averaged tb_prob (it IS the average)
+    assert abs(result.tb_prob - sum(result.tta_passes) / K_PASSES) < 1e-6
+
+
+def test_engine_uses_locked_calibration_when_available() -> None:
+    """If data/p0_locked_calibration.json exists, the engine uses its T and thr."""
+    import json
+    from pathlib import Path
+    from triage_core import TriageEngine
+
+    locked_path = Path(__file__).parent.parent / 'data' / 'p0_locked_calibration.json'
+    if not locked_path.exists():
+        print('SKIP test_engine_uses_locked_calibration_when_available — locked JSON missing')
+        return
+    with locked_path.open() as f:
+        locked = json.load(f)
+    eng = TriageEngine(use_locked_protocol=True)
+    assert abs(eng.T - locked['T']) < 1e-9
+    assert abs(eng.thr - locked['thr_at_95sens']) < 1e-9
+
+
 def _run_all() -> None:
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
