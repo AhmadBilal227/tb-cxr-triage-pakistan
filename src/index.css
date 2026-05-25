@@ -62,3 +62,23 @@
 .scroll-thin::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/*
+ * prefers-reduced-motion — honor the user's OS / browser preference. Disables
+ * the shimmer skeleton, the fade-in keyframe, and the progress-bar width
+ * transition. Per WCAG 2.2 SC 2.3.3 (Animation from Interactions).
+ */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton,
+  .animate-shimmer,
+  .animate-fade-in,
+  .animate-spin {
+    animation: none !important;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
+}

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { PanelLeftClose, PanelLeftOpen, History } from 'lucide-react';
 import { listHistory } from '@/lib/db';
@@ -10,6 +11,24 @@ const VERDICT_BORDER: Record<Verdict, string> = {
   abstain: 'border-verdict-uncertain',
 };
 
+/**
+ * Manage one object URL per history thumbnail, revoking on change/unmount.
+ * Previously the URLs were minted inline in render and never revoked — a slow
+ * Blob-URL leak that grew with every history mutation over a session.
+ */
+function useThumbnailUrls(history: CaseHistoryRecord[]): Map<string, string> {
+  const [urls, setUrls] = useState<Map<string, string>>(() => new Map());
+  useEffect(() => {
+    const next = new Map<string, string>();
+    for (const rec of history) next.set(rec.id, URL.createObjectURL(rec.blob));
+    setUrls(next);
+    return () => {
+      for (const url of next.values()) URL.revokeObjectURL(url);
+    };
+  }, [history]);
+  return urls;
+}
+
 export function LeftRail({
   open,
   onToggle,
@@ -20,12 +39,16 @@ export function LeftRail({
   onSelect: (rec: CaseHistoryRecord) => void;
 }): JSX.Element {
   const history = useLiveQuery(() => listHistory(50), [], [] as CaseHistoryRecord[]);
+  const thumbUrls = useThumbnailUrls(history);
 
   return (
     <aside
       className={cn(
-        'flex h-full flex-col border-r border-border bg-surface transition-all duration-200',
-        open ? 'w-44' : 'w-12',
+        // Hidden below md — the history rail is a desktop affordance. Below
+        // md the canvas owns the full width; history stays reachable via the
+        // command palette's "New case" / re-drop flow.
+        'hidden h-full flex-col border-r border-border bg-surface transition-all duration-200 md:flex',
+        open ? 'md:w-44' : 'md:w-12',
       )}
     >
       <div className="flex items-center justify-between border-b border-border px-2 py-3">
@@ -58,7 +81,7 @@ export function LeftRail({
             title={`${rec.imageName} — ${rec.verdict ?? 'incomplete'}`}
           >
             <img
-              src={URL.createObjectURL(rec.blob)}
+              src={thumbUrls.get(rec.id)}
               alt={rec.imageName}
               className={cn('w-full object-cover', open ? 'h-20' : 'h-8')}
             />

@@ -361,7 +361,7 @@ function PerceptionPathDisclosure({
     return (
       <>
         <div
-          className="mt-1 px-1 text-[10px] leading-snug text-muted/80"
+          className="mt-1 px-1 text-[10px] leading-snug text-muted"
           data-testid="local-mode-disclosure"
         >
           This result is produced by the validated Rad-DINO + TorchXRayVision research model
@@ -371,7 +371,7 @@ function PerceptionPathDisclosure({
           (healed fibrosis, pleural thickening — M18 NIH stress). Not a medical device.
         </div>
         <div
-          className="mt-1 px-1 font-mono text-[9px] uppercase tracking-wider text-muted/60"
+          className="mt-1 px-1 font-mono text-[9px] uppercase tracking-wider text-muted"
           data-testid="perception-path-indicator"
         >
           perception path: local trained model (validated) · {verifierTag}
@@ -385,14 +385,14 @@ function PerceptionPathDisclosure({
     return (
       <>
         <div
-          className="mt-1 px-1 text-[10px] leading-snug text-muted/80"
+          className="mt-1 px-1 text-[10px] leading-snug text-muted"
           data-testid="scar-fpr-disclosure"
         >
           Higher false-positive rate (~10%) expected on radiographically scar-shaped findings
           (healed fibrosis, pleural thickening).
         </div>
         <div
-          className="mt-1 px-1 font-mono text-[9px] uppercase tracking-wider text-muted/60"
+          className="mt-1 px-1 font-mono text-[9px] uppercase tracking-wider text-muted"
           data-testid="perception-path-indicator"
         >
           perception path: local ONNX (rad-dino + txrv, validated head)
@@ -407,7 +407,7 @@ function PerceptionPathDisclosure({
   return (
     <>
       <div
-        className="mt-1 px-1 text-[10px] leading-snug text-muted/80"
+        className="mt-1 px-1 text-[10px] leading-snug text-muted"
         data-testid="vlm-primary-disclosure"
       >
         This result is produced by a general-purpose vision-language model (gpt-5.5 vision), not the
@@ -417,14 +417,14 @@ function PerceptionPathDisclosure({
         thickening, or abstain on image-quality issues. Research triage support only — not diagnosis.
       </div>
       <div
-        className="mt-1 px-1 text-[9px] leading-snug text-muted/60"
+        className="mt-1 px-1 text-[9px] leading-snug text-muted"
         data-testid="onnx-deployed-but-inactive-note"
       >
         Local validated ONNX heads (Rad-DINO + TorchXRayVision, AUROC 0.922 LODO) ship with this
         build but cannot execute without browser-side backbone features (Phase B gap).
       </div>
       <div
-        className="mt-1 px-1 font-mono text-[9px] uppercase tracking-wider text-muted/60"
+        className="mt-1 px-1 font-mono text-[9px] uppercase tracking-wider text-muted"
         data-testid="perception-path-indicator"
       >
         perception path: {modelId} (unvalidated VLM)

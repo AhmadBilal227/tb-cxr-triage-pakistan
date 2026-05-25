@@ -23,6 +23,7 @@ import { Button } from '../ui/button';
 import { Activity, Crosshair, ListTree, Maximize2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { viridis } from './colorScale';
+import { scoreToTriadHex } from '@/lib/colors';
 
 const NEAR_ZERO_FLOOR = 0.05;
 
@@ -189,7 +190,9 @@ export function ImageLightbox({
           {showPathologies && (sortedPathologies.length > 0 || sortedZones.length > 0) && (
             <aside
               className={cn(
-                'absolute right-0 top-0 h-full w-64 overflow-y-auto scroll-thin border-l border-white/10 bg-black/60 px-4 py-16 backdrop-blur transition-opacity duration-200',
+                // Hidden below md (cramped on phones); the toggles still
+                // gate it, this just removes it from narrow viewports.
+                'absolute right-0 top-0 hidden h-full w-64 overflow-y-auto scroll-thin border-l border-white/10 bg-black/60 px-4 py-16 backdrop-blur transition-opacity duration-200 md:block',
                 chromeVisible ? 'opacity-100' : 'opacity-30',
               )}
               data-testid="lightbox-side-panel"
@@ -287,7 +290,7 @@ function ZoneLabelsOverlay({ scores }: { scores: Record<string, number> }): JSX.
       {Object.entries(scores).map(([k, v]) => {
         const rect = ZONE_RECTS[k];
         if (!rect) return null;
-        const color = scoreToHex(v);
+        const color = scoreToTriadHex(v);
         return (
           <div
             key={k}
@@ -352,16 +355,7 @@ function ToggleButton({
       className={cn('text-white/70 hover:text-white', active && 'text-white')}
     >
       {icon}
-      <span>{children}</span>
+      <span className="hidden sm:inline">{children}</span>
     </Button>
   );
-}
-
-/** Map a [0,1] score to a brand-aligned color for zone labels. */
-function scoreToHex(v: number): string {
-  const s = Math.max(0, Math.min(1, v));
-  // Green at low, amber at mid, red at high — matches verdict palette.
-  if (s < 0.2) return '#00754A';
-  if (s < 0.5) return '#F59E0B';
-  return '#C8102E';
 }

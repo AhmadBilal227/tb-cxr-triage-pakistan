@@ -29,6 +29,7 @@ import type { Adjudication, Verdict } from '@/lib/types';
 import type { LocalTriageResult } from '@/lib/providers/localTriage';
 import type { ClinicianReport, ImpressionItem } from '@/lib/providers/gptInterpreter';
 import { GPT_INTERPRETER_SCHEMA_VERSION } from '@/lib/providers/gptInterpreter';
+import { VERDICT_RGB } from '@/lib/colors';
 
 export interface PdfOpts {
   report: ClinicianReport;
@@ -45,12 +46,7 @@ const VERDICT_LABEL: Record<Verdict, string> = {
   abstain: 'UNCERTAIN — REFER',
 };
 
-// RGB triples; jsPDF setFillColor / setTextColor want components 0-255.
-const VERDICT_RGB: Record<Verdict, [number, number, number]> = {
-  tb: [200, 16, 46],
-  no_tb: [0, 117, 74],
-  abstain: [245, 158, 11],
-};
+// VERDICT_RGB (jsPDF wants 0-255 components) is single-sourced from src/lib/colors.
 
 const PAGE_W = 210;
 const PAGE_H = 297;
@@ -71,7 +67,7 @@ export function downloadClinicianReportPdf(opts: PdfOpts): void {
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
-  doc.text('Chest Radiograph Report  —  TB Triage', MARGIN_X, 8);
+  doc.text('Chest Radiograph Report  ·  TB Triage', MARGIN_X, 8);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(11);
   doc.text(VERDICT_LABEL[verdict], MARGIN_X, 14);
@@ -95,20 +91,22 @@ export function downloadClinicianReportPdf(opts: PdfOpts): void {
   const COL_LEFT_W = COL_RIGHT_X - MARGIN_X - 4;
   const COL_RIGHT_W = PAGE_W - COL_RIGHT_X - MARGIN_X;
 
-  // Image on the right (aspect-preserved). Fall back gracefully if the
-  // image data URL is malformed by skipping the embed.
+  // Image on the right, aspect-preserved. Read the real pixel dimensions
+  // via getImageProperties so a non-square CXR is not distorted; clamp the
+  // drawn height so a tall portrait film can't overrun the body region.
+  let drawnImageH = COL_RIGHT_W; // fallback to square if properties fail
   try {
     const fmt = imageDataUrl.startsWith('data:image/jpeg') ? 'JPEG' : 'PNG';
-    // We don't know the source image aspect at PDF-gen time. Render into a
-    // 75mm-wide square slot, jsPDF will preserve aspect via height=0 only when
-    // supplied with an ImageProperties — simpler: render fixed 75x75 (a CXR is
-    // typically near-square once letterboxed and the embed reads cleanly).
-    doc.addImage(imageDataUrl, fmt, COL_RIGHT_X, y, COL_RIGHT_W, COL_RIGHT_W);
+    const props = doc.getImageProperties(imageDataUrl);
+    const aspect = props.height > 0 && props.width > 0 ? props.height / props.width : 1;
+    drawnImageH = Math.min(COL_RIGHT_W * aspect, COL_RIGHT_W * 1.4);
+    doc.addImage(imageDataUrl, fmt, COL_RIGHT_X, y, COL_RIGHT_W, drawnImageH);
   } catch {
     doc.setFontSize(8);
     doc.setTextColor(150, 150, 150);
     doc.text('(image embed unavailable)', COL_RIGHT_X, y + 6);
     doc.setTextColor(20, 20, 20);
+    drawnImageH = 8;
   }
 
   // Left column: TECHNIQUE + COMPARISON + FINDINGS sections.
@@ -127,8 +125,8 @@ export function downloadClinicianReportPdf(opts: PdfOpts): void {
   y = subFinding(doc, 'Bones and soft tissues', report.findings.bones_and_soft_tissues, COL_LEFT_X, y, COL_LEFT_W);
 
   // Pull cursor below whichever column ended lower so the next full-width
-  // section does not overlap the image.
-  const yAfterImage = 26 + COL_RIGHT_W + 6;
+  // section does not overlap the image (image top is at y=26).
+  const yAfterImage = 26 + drawnImageH + 6;
   y = Math.max(y, yAfterImage);
 
   // --------------------------------------------------------------------

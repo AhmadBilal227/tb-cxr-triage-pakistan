@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Activity,
@@ -23,12 +23,22 @@ import { NoKeysBanner } from '@/components/NoKeysBanner';
 import { FirstUseModal } from '@/components/FirstUseModal';
 import { LeftRail } from '@/components/LeftRail';
 import { DropCanvas, type SampleEntry } from '@/components/DropCanvas';
-import { AgentTrace } from '@/components/AgentTrace';
-import { VerdictCard } from '@/components/VerdictCard';
 import { SettingsDrawer } from '@/components/SettingsDrawer';
 import { CommandPalette, buildActions } from '@/components/CommandPalette';
 import { makeSampleCXR } from '@/lib/sample';
 import { Button } from '@/components/ui/button';
+
+// Code-split the result subtree. VerdictCard pulls in the entire details/
+// stack (heatmap, zonal bars, pathology list, clinician report, secondary
+// observations, image lightbox); none of it is needed until an analysis
+// completes. AgentTrace only renders behind the ?trace toggle. Splitting both
+// keeps the first-paint bundle under the 500 kB warning floor.
+const VerdictCard = lazy(() =>
+  import('@/components/VerdictCard').then((m) => ({ default: m.VerdictCard })),
+);
+const AgentTrace = lazy(() =>
+  import('@/components/AgentTrace').then((m) => ({ default: m.AgentTrace })),
+);
 
 interface ActiveImage {
   blob: Blob;
@@ -301,19 +311,19 @@ export default function App(): JSX.Element {
 
       {/* Header */}
       <header className="flex items-center justify-between border-b border-border px-4 py-2">
-        <div className="flex items-center gap-2">
-          <ShieldAlert className="h-4 w-4 text-verdict-tb" />
+        <div className="flex min-w-0 items-center gap-2">
+          <ShieldAlert className="h-4 w-4 shrink-0 text-verdict-tb" />
           <span className="text-sm font-semibold tracking-tight">TB Triage</span>
-          <span className="font-mono text-[10px] text-muted">research preview</span>
+          <span className="hidden font-mono text-[10px] text-muted sm:inline">research preview</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 sm:gap-2">
           {state.run && state.run.fallbackRate > 0 && (
-            <span className="font-mono text-[10px] text-provider-replicate">
+            <span className="hidden font-mono text-[10px] text-provider-replicate sm:inline">
               fallback {(state.run.fallbackRate * 100).toFixed(0)}%
             </span>
           )}
-          <Button variant="ghost" size="sm" onClick={() => navigate('/validate')}>
-            <BarChart3 className="h-3.5 w-3.5" /> Validate
+          <Button variant="ghost" size="sm" onClick={() => navigate('/validate')} aria-label="Validate">
+            <BarChart3 className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Validate</span>
           </Button>
           <Button
             variant="ghost"
@@ -323,10 +333,10 @@ export default function App(): JSX.Element {
             aria-label={traceOpen ? 'Hide trace' : 'Show trace'}
             className={traceOpen ? 'text-provider-openai' : undefined}
           >
-            <Activity className="h-3.5 w-3.5" /> Trace
+            <Activity className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Trace</span>
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => setPaletteOpen(true)}>
-            <CommandIcon className="h-3.5 w-3.5" /> K
+          <Button variant="ghost" size="sm" onClick={() => setPaletteOpen(true)} aria-label="Command palette">
+            <CommandIcon className="h-3.5 w-3.5" /> <span className="hidden sm:inline">K</span>
           </Button>
           <Button variant="ghost" size="icon" onClick={() => setSettingsOpen(true)} aria-label="Settings">
             <SettingsIcon className="h-4 w-4" />
@@ -358,20 +368,24 @@ export default function App(): JSX.Element {
 
           {state.adjudication && !state.halted && (
             <div className="mx-6 mb-4">
-              <VerdictCard
-                adjudication={state.adjudication}
-                ensemble={state.ensemble}
-                rag={state.rag}
-                fallbackRate={state.run?.fallbackRate ?? 0}
-                onDisagree={onDisagree}
-                onOpenSettings={() => setSettingsOpen(true)}
-                imageDataUrl={imageDataUrl ?? undefined}
-                openaiKey={settings.openaiKey}
-                primaryModel={settings.models.adjudicator}
-                fallbackModel={settings.models.adjudicatorFallback}
-                lightboxOpen={lightboxOpen}
-                onLightboxOpenChange={setLightboxOpen}
-              />
+              <Suspense
+                fallback={<div className="skeleton h-40 w-full rounded-xl" aria-label="Loading verdict" />}
+              >
+                <VerdictCard
+                  adjudication={state.adjudication}
+                  ensemble={state.ensemble}
+                  rag={state.rag}
+                  fallbackRate={state.run?.fallbackRate ?? 0}
+                  onDisagree={onDisagree}
+                  onOpenSettings={() => setSettingsOpen(true)}
+                  imageDataUrl={imageDataUrl ?? undefined}
+                  openaiKey={settings.openaiKey}
+                  primaryModel={settings.models.adjudicator}
+                  fallbackModel={settings.models.adjudicatorFallback}
+                  lightboxOpen={lightboxOpen}
+                  onLightboxOpenChange={setLightboxOpen}
+                />
+              </Suspense>
             </div>
           )}
 
@@ -387,8 +401,10 @@ export default function App(): JSX.Element {
         </main>
 
         {traceOpen && (
-          <aside className="w-96 shrink-0 border-l border-border bg-surface">
-            <AgentTrace state={state} />
+          <aside className="hidden w-96 shrink-0 border-l border-border bg-surface lg:block">
+            <Suspense fallback={<div className="skeleton m-3 h-24 rounded-lg" aria-label="Loading trace" />}>
+              <AgentTrace state={state} />
+            </Suspense>
           </aside>
         )}
       </div>

@@ -223,6 +223,14 @@ export const GPT_INTERPRETER_PROMPT = [
   '- Do NOT include the research-only disclaimer in the report sections; that lives in a separate disclosure rendered outside the report.',
   '',
   'Output ONLY the JSON schema fields. No chain-of-thought. No commentary.',
+  '',
+  'VOICE-ANCHOR EXAMPLE (use for tone + structure only; do NOT copy this content)',
+  'Given evidence: verdict=no_tb, tb_prob=0.08, zones=[upper_r:0.12], TXRV=[Lung Opacity:0.18, Cardiomegaly:0.16]',
+  'findings.lungs_and_airways: "The lungs are well-expanded and clear. No focal consolidation, cavitation, or nodular opacity is identified. No apical or posterior upper-lobe predominance to suggest reactivation tuberculosis."',
+  'findings.cardiomediastinum: "The cardiac silhouette is mildly enlarged; the mediastinum is otherwise unremarkable. No hilar adenopathy."',
+  'impression[0]: { statement: "No radiographic findings to suggest active pulmonary tuberculosis on this single frontal view. A negative screen does not exclude early or subclinical disease.", likelihood: "primary" }',
+  'impression[1]: { statement: "Mild cardiomegaly, clinical correlation recommended.", likelihood: "consider" }',
+  'Note the impersonal voice, the explicit "clear / unremarkable" statements for non-flagged regions, the cardiomegaly handled as a non-TB consider rather than as the primary statement, and the hedged "mildly" qualifier instead of a measurement.',
 ].join('\n');
 
 // FNV-1a 32-bit hash for audit pinning (mirrors vlmTriage's fnv1aHex).

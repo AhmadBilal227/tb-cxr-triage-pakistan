@@ -1,6 +1,9 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  darkMode: 'class',
+  // Dark-only by intent. `color-scheme: dark` is pinned in src/index.css.
+  // If a light theme is ever added, switch to `darkMode: 'class'` here and
+  // introduce `dark:` variants throughout — but ship light mode as a real
+  // feature, not as a config-without-implementation artifact.
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
