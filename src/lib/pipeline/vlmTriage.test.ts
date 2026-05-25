@@ -232,11 +232,14 @@ describe('isBorderlineForConsistencyCheck', () => {
     ).toBe(true);
   });
 
-  it('band edge values respect the documented bounds', () => {
-    expect(VLM_BORDERLINE_LOW).toBe(0.35);
+  it('band edge values respect the documented bounds (M26 — low edge widened from 0.35 to 0.20)', () => {
+    expect(VLM_BORDERLINE_LOW).toBe(0.20);
     expect(VLM_BORDERLINE_HIGH).toBe(0.65);
     expect(isBorderlineForConsistencyCheck(s({ tb_score_uncalibrated: VLM_BORDERLINE_LOW }))).toBe(true);
     expect(isBorderlineForConsistencyCheck(s({ tb_score_uncalibrated: VLM_BORDERLINE_HIGH }))).toBe(true);
+    // M26 — values in [0.20, 0.35) should ALSO be borderline now (they were
+    // outside the old band; the M24 diagnostic motivated catching them).
+    expect(isBorderlineForConsistencyCheck(s({ tb_score_uncalibrated: 0.28 }))).toBe(true);
   });
 });
 

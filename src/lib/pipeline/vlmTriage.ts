@@ -386,8 +386,24 @@ export async function vlmTriage(opts: VlmTriageOpts): Promise<VlmTriageCall> {
 // ---------------------------------------------------------------------------
 // Borderline / consistency-check predicates (pure; orchestrator drives the call).
 // ---------------------------------------------------------------------------
-/** Lower edge of the "borderline" band where the verifier call fires. */
-export const VLM_BORDERLINE_LOW = 0.35 as const;
+/**
+ * Lower edge of the "borderline" band where the verifier call fires.
+ *
+ * M26 — widened from 0.35 to 0.20. The M24 diagnostic surfaced TB cases
+ * where the model returned mid-range scores (tb_prob 0.48, 0.60 on
+ * tb_blind_04 / tb_blind_01) and was wrong; widening the lower edge of
+ * the band catches MORE uncertain cases at the cost of a small bump in
+ * gpt-5.5 vision verifier calls (the verifier only fires when borderline,
+ * so the cost increase is proportional to the slice of cases sitting in
+ * [0.20, 0.35] — empirically ~7% of LODO calls; on a 13k cache that's
+ * ~900 extra calls but on a single browser session it's ~0). Trade a
+ * few extra GPT calls for the chance of catching mid-zone TB the
+ * validated head reads as low-probability.
+ *
+ * Aligned with `asymmetricEvidence.TB_PROB_LOW_THRESHOLD` (also 0.20)
+ * so the local-path and vlm-path borderlines share a single number.
+ */
+export const VLM_BORDERLINE_LOW = 0.20 as const;
 /** Upper edge — above this the primary's "positive" stands without a second opinion. */
 export const VLM_BORDERLINE_HIGH = 0.65 as const;
 

@@ -31,6 +31,11 @@ import {
   applySequelaeEscalation,
   DEFAULT_BORDERLINE_HIGH,
 } from './sequelaeEscalation';
+import {
+  applyAsymmetricEvidence,
+  maxBoxEvidence,
+  topTbRelevantPathology,
+} from './asymmetricEvidence';
 import { localTriage, type LocalTriageResult } from '@/lib/providers/localTriage';
 
 type Emit = (e: PipelineEvent) => void;
@@ -100,13 +105,23 @@ interface VlmCombineResult {
 }
 
 // ---------------------------------------------------------------------------
-// Local-mode helpers (Milestone 22, unchanged in M23).
+// Local-mode helpers (Milestone 22; M26 widened the low edge to 0.20).
 //
 // localBorderline: when the calibrated `tb_prob` from the local server sits
-// inside [0.35, 0.65] OR `s_inactive` exceeds the scar-recall threshold (0.7126),
+// inside [0.20, 0.65] OR `s_inactive` exceeds the scar-recall threshold (0.7126),
 // we ALSO fire the gpt-5.5 vision call — it doesn't decide, it consistency-checks.
+//
+// M26 — widened the LOW edge from 0.35 to 0.20 to mirror the
+// `asymmetricEvidence.TB_PROB_LOW_THRESHOLD` widening. The M24 diagnostic
+// surfaced TB cases that landed at tb_prob 0.48 / 0.60 (already in the old
+// band, so they DO fire the verifier today) and a separate class at tb_prob
+// near zero with high box+pathology evidence (the M26 asymmetric-evidence
+// catch). Widening the local-borderline band to [0.20, 0.65] catches more
+// uncertain cases AT the verifier stage too — a complementary safety net
+// for cases that don't trip the M26 box+pathology AND-gate. Cost: a small
+// bump in gpt-5.5 vision calls per browser session.
 // ---------------------------------------------------------------------------
-const LOCAL_BORDERLINE_LOW = 0.35;
+const LOCAL_BORDERLINE_LOW = 0.20;
 const LOCAL_BORDERLINE_HIGH_FOR_GPT_CHECK = 0.65;
 const LOCAL_S_INACTIVE_TRIGGER_FOR_GPT_CHECK = 0.7126;
 
@@ -194,6 +209,23 @@ export function combineLocalIntoAdjudication(args: {
   if (clientEsc.escalated) {
     finalVerdict = clientEsc.verdict;
     if (clientEsc.reason) reasons.push(`client safety net escalated: ${clientEsc.reason}`);
+  }
+
+  // M26 — asymmetric-evidence ABSTAIN rule (the third NO_TB→ABSTAIN escalator).
+  // Composes after sequelaeEscalation: any rule that already pushed NO_TB up
+  // to ABSTAIN short-circuits this one (the rule no-ops on non-NO_TB). When the
+  // local server didn't emit enrichment fields (older server / non-local path)
+  // both helpers return null and the rule no-ops. Derivation lives in
+  // asymmetricEvidence.ts header.
+  const asymEsc = applyAsymmetricEvidence({
+    verdict: finalVerdict,
+    tbProb: local.tb_prob,
+    boxEvidenceMax: maxBoxEvidence(local.box_evidence_grid),
+    topPathologyScore: topTbRelevantPathology(local.txrv_pathologies),
+  });
+  if (asymEsc.escalated) {
+    finalVerdict = asymEsc.verdict;
+    if (asymEsc.reason) reasons.push(`client safety net escalated: ${asymEsc.reason}`);
   }
 
   // Confidence: linear ramp on tb_prob, anchored at the validated threshold.
