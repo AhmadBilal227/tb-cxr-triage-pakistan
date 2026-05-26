@@ -4,6 +4,10 @@
 
 ### An AI-native tuberculosis chest-X-ray triage system — built to report the *honest* number, not the flattering one.
 
+<video src="https://github.com/AhmadBilal227/tb-cxr-triage-pakistan/raw/main/docs/media/demo.mp4" controls muted loop width="100%"></video>
+
+*▶️ 60-second demo. If the player doesn't load, [watch it here](https://github.com/AhmadBilal227/tb-cxr-triage-pakistan/raw/main/docs/media/demo.mp4).*
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](./LICENSE)
 [![Status: research preview](https://img.shields.io/badge/status-research%20preview-orange.svg)](#%EF%B8%8F-not-a-medical-device)
 [![⚠️ Not a medical device](https://img.shields.io/badge/%E2%9A%A0%EF%B8%8F-not%20a%20medical%20device-red.svg)](#%EF%B8%8F-not-a-medical-device)
