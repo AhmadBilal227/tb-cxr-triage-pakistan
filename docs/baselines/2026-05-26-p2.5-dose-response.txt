@@ -1,0 +1,74 @@
+P2.5 PAKISTANI DOSE-RESPONSE (within-cohort holdout; NOT new-site generalization)
+ENDPOINT: radiographic-TB-pattern (NOT bacteriologically-confirmed). Research preview.
+4-source corpus: n=13092 pos=1747 neg=11345 sources={'montgomery': 138, 'shenzhen': 662, 'qatar': 4193, 'tbx11k': 8099}
+PK: total=3008 | FIXED test n=1204 (pos=998 neg=206) | pool n=1804 (pos=1496 neg=308)
+
+===== DOSE 0: +0 PK train rows (pos=0 neg=0) =====
+  training corpus n=13092 pos=1747 neg=11345
+  -- 4-source LODO OOF (per-config calibration surface; forgetting check) --
+    OOF holdout=montgomery   n=  138 filled [cleaner external]
+    OOF holdout=shenzhen     n=  662 filled [cleaner external]
+    OOF holdout=qatar        n= 4193 filled [LEAKAGE-PRONE re-mix]
+    OOF holdout=tbx11k       n= 8099 filled [LEAKAGE-PRONE re-mix]
+  per-config calibration: T=3.2000 thr@95sens=0.0996 (n_cal=2619 n_eval=10473)
+  -- full-corpus deployed head -> score FIXED PK test --
+  PK-TEST: AUROC=0.823 [0.797, 0.848] spec@sens0.90=0.359 sens@spec0.70=0.809 ece=0.071
+  LODO-EVAL: AUROC=0.911 sens@thr=0.952 (floor 0.846; OK)
+
+===== DOSE 150: +150 PK train rows (pos=124 neg=26) =====
+  training corpus n=13242 pos=1871 neg=11371
+  -- 4-source LODO OOF (per-config calibration surface; forgetting check) --
+    OOF holdout=montgomery   n=  138 filled [cleaner external]
+    OOF holdout=shenzhen     n=  662 filled [cleaner external]
+    OOF holdout=qatar        n= 4193 filled [LEAKAGE-PRONE re-mix]
+    OOF holdout=tbx11k       n= 8099 filled [LEAKAGE-PRONE re-mix]
+  per-config calibration: T=3.5500 thr@95sens=0.1638 (n_cal=2619 n_eval=10473)
+  -- full-corpus deployed head -> score FIXED PK test --
+  PK-TEST: AUROC=0.980 [0.973, 0.986] spec@sens0.90=0.951 sens@spec0.70=0.981 ece=0.072
+  LODO-EVAL: AUROC=0.929 sens@thr=0.963 (floor 0.846; OK)
+
+===== DOSE 300: +300 PK train rows (pos=249 neg=51) =====
+  training corpus n=13392 pos=1996 neg=11396
+  -- 4-source LODO OOF (per-config calibration surface; forgetting check) --
+    OOF holdout=montgomery   n=  138 filled [cleaner external]
+    OOF holdout=shenzhen     n=  662 filled [cleaner external]
+    OOF holdout=qatar        n= 4193 filled [LEAKAGE-PRONE re-mix]
+    OOF holdout=tbx11k       n= 8099 filled [LEAKAGE-PRONE re-mix]
+  per-config calibration: T=3.4000 thr@95sens=0.2242 (n_cal=2619 n_eval=10473)
+  -- full-corpus deployed head -> score FIXED PK test --
+  PK-TEST: AUROC=0.994 [0.991, 0.997] spec@sens0.90=1.000 sens@spec0.70=0.995 ece=0.075
+  LODO-EVAL: AUROC=0.941 sens@thr=0.966 (floor 0.846; OK)
+
+===== DOSE 600: +600 PK train rows (pos=498 neg=102) =====
+  training corpus n=13692 pos=2245 neg=11447
+  -- 4-source LODO OOF (per-config calibration surface; forgetting check) --
+    OOF holdout=montgomery   n=  138 filled [cleaner external]
+    OOF holdout=shenzhen     n=  662 filled [cleaner external]
+    OOF holdout=qatar        n= 4193 filled [LEAKAGE-PRONE re-mix]
+    OOF holdout=tbx11k       n= 8099 filled [LEAKAGE-PRONE re-mix]
+  per-config calibration: T=3.3500 thr@95sens=0.1854 (n_cal=2619 n_eval=10473)
+  -- full-corpus deployed head -> score FIXED PK test --
+  PK-TEST: AUROC=1.000 [0.999, 1.0] spec@sens0.90=1.000 sens@spec0.70=1.000 ece=0.028
+  LODO-EVAL: AUROC=0.940 sens@thr=0.970 (floor 0.846; OK)
+
+===== DOSE ALL: +1804 PK train rows (pos=1496 neg=308) =====
+  training corpus n=14896 pos=3243 neg=11653
+  -- 4-source LODO OOF (per-config calibration surface; forgetting check) --
+    OOF holdout=montgomery   n=  138 filled [cleaner external]
+    OOF holdout=shenzhen     n=  662 filled [cleaner external]
+    OOF holdout=qatar        n= 4193 filled [LEAKAGE-PRONE re-mix]
+    OOF holdout=tbx11k       n= 8099 filled [LEAKAGE-PRONE re-mix]
+  per-config calibration: T=3.3500 thr@95sens=0.2191 (n_cal=2619 n_eval=10473)
+  -- full-corpus deployed head -> score FIXED PK test --
+  PK-TEST: AUROC=1.000 [1.0, 1.0] spec@sens0.90=1.000 sens@spec0.70=1.000 ece=0.040
+  LODO-EVAL: AUROC=0.927 sens@thr=0.966 (floor 0.846; OK)
+
+Wrote data/p2.5_dose_response.json
+
+=== DOSE-RESPONSE (within-cohort; NOT new-site generalization) ===
+  dose  PKrows |  PK AUROC            95% CI  spec@.90  sens@.70    ECE |  LODO AUC  LODO sens
+     0       0 |     0.823     [0.797,0.848]     0.359     0.809  0.071 |     0.911      0.952
+   150     150 |     0.980     [0.973,0.986]     0.951     0.981  0.072 |     0.929      0.963
+   300     300 |     0.994     [0.991,0.997]     1.000     0.995  0.075 |     0.941      0.966
+   600     600 |     1.000     [0.999,1.000]     1.000     1.000  0.028 |     0.940      0.970
+   ALL    1804 |     1.000     [1.000,1.000]     1.000     1.000  0.040 |     0.927      0.966

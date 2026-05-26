@@ -1,0 +1,163 @@
+{
+  "meta": {
+    "preregistration": "docs/baselines/2026-05-26-p2.5-preregistration.md",
+    "caveat": "WITHIN-COHORT (same-site) holdout once PK is in training; measures DATA-CLOSABILITY + dose-response, NOT new-site generalization.",
+    "pk_test_n": 1204,
+    "pk_test_pos": 998,
+    "pk_test_neg": 206,
+    "pk_pool_n": 1804,
+    "doses": [
+      "0",
+      "150",
+      "300",
+      "600",
+      "ALL"
+    ],
+    "head": "zonal-softor",
+    "levers": [
+      "fusion",
+      "zonal",
+      "box"
+    ],
+    "calibration": "per-config T + thr@95sens on the 4-source OOF seed=7 cal slice",
+    "bootstrap_n": 2000,
+    "lodo_baseline_sens_floor": 0.846
+  },
+  "doses": {
+    "0": {
+      "pk_train_rows": 0,
+      "pk_train_pos": 0,
+      "pk_train_neg": 0,
+      "calibration": {
+        "T": 3.2,
+        "thr_at_95sens": 0.09955052467165257,
+        "n_cal": 2619,
+        "n_eval": 10473
+      },
+      "pakistani_test": {
+        "auroc": 0.8229906414771291,
+        "auroc_ci": [
+          0.796628080161931,
+          0.8484914261749157
+        ],
+        "spec_at_sens0.90": 0.35922330097087374,
+        "sens_at_spec0.70": 0.8086172344689379,
+        "ece": 0.07053175927631374,
+        "n": 1204
+      },
+      "lodo_eval": {
+        "auroc": 0.9112877402404511,
+        "sens_at_thr": 0.9520400858983536,
+        "n": 10473
+      }
+    },
+    "150": {
+      "pk_train_rows": 150,
+      "pk_train_pos": 124,
+      "pk_train_neg": 26,
+      "calibration": {
+        "T": 3.5500000000000003,
+        "thr_at_95sens": 0.1638235356213191,
+        "n_cal": 2619,
+        "n_eval": 10473
+      },
+      "pakistani_test": {
+        "auroc": 0.9799453275483005,
+        "auroc_ci": [
+          0.9726529160405578,
+          0.9863608031303217
+        ],
+        "spec_at_sens0.90": 0.9514563106796117,
+        "sens_at_spec0.70": 0.9809619238476954,
+        "ece": 0.07194645688901691,
+        "n": 1204
+      },
+      "lodo_eval": {
+        "auroc": 0.9288854193317986,
+        "sens_at_thr": 0.9627773801002147,
+        "n": 10473
+      }
+    },
+    "300": {
+      "pk_train_rows": 300,
+      "pk_train_pos": 249,
+      "pk_train_neg": 51,
+      "calibration": {
+        "T": 3.4000000000000004,
+        "thr_at_95sens": 0.22420215357522316,
+        "n_cal": 2619,
+        "n_eval": 10473
+      },
+      "pakistani_test": {
+        "auroc": 0.9943868319162598,
+        "auroc_ci": [
+          0.9908216360049996,
+          0.997188195615562
+        ],
+        "spec_at_sens0.90": 1.0,
+        "sens_at_spec0.70": 0.9949899799599199,
+        "ece": 0.07490026992425197,
+        "n": 1204
+      },
+      "lodo_eval": {
+        "auroc": 0.9407026736446197,
+        "sens_at_thr": 0.9663564781675018,
+        "n": 10473
+      }
+    },
+    "600": {
+      "pk_train_rows": 600,
+      "pk_train_pos": 498,
+      "pk_train_neg": 102,
+      "calibration": {
+        "T": 3.35,
+        "thr_at_95sens": 0.18541059899167273,
+        "n_cal": 2619,
+        "n_eval": 10473
+      },
+      "pakistani_test": {
+        "auroc": 0.9995962799385179,
+        "auroc_ci": [
+          0.9991110132617748,
+          0.9999297246902474
+        ],
+        "spec_at_sens0.90": 1.0,
+        "sens_at_spec0.70": 1.0,
+        "ece": 0.02783441416486844,
+        "n": 1204
+      },
+      "lodo_eval": {
+        "auroc": 0.9395712117478964,
+        "sens_at_thr": 0.9699355762347889,
+        "n": 10473
+      }
+    },
+    "ALL": {
+      "pk_train_rows": 1804,
+      "pk_train_pos": 1496,
+      "pk_train_neg": 308,
+      "calibration": {
+        "T": 3.35,
+        "thr_at_95sens": 0.21911655007561182,
+        "n_cal": 2619,
+        "n_eval": 10473
+      },
+      "pakistani_test": {
+        "auroc": 0.9998881257660953,
+        "auroc_ci": [
+          0.9996563623086726,
+          1.0
+        ],
+        "spec_at_sens0.90": 1.0,
+        "sens_at_spec0.70": 1.0,
+        "ece": 0.039943340926333545,
+        "n": 1204
+      },
+      "lodo_eval": {
+        "auroc": 0.9268647037834962,
+        "sens_at_thr": 0.9663564781675018,
+        "n": 10473
+      }
+    }
+  }
+}
