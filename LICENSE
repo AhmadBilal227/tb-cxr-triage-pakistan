@@ -19,20 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-ADDITIONAL NOTICE — NOT A MEDICAL DEVICE
-
-This software and the accompanying model weights are a research preview, not a
-medical device, and are not cleared or approved by any regulatory body (FDA,
-CE, etc.). They are not intended for clinical use, diagnosis, or treatment
-decisions. The reported performance is against RADIOGRAPHIC labels on open
-datasets, not bacteriologically confirmed tuberculosis, and does not transfer
-unchanged to new sites. Use for research and education only.
-
-The trained heads in `public/models/` are the authors' own artifacts. They
-consume features from upstream models (Microsoft Rad-DINO, TorchXRayVision) and
-were trained on third-party datasets, each of which carries its own license and
-terms — see the Model Card and Acknowledgements in README.md. Respect those
-upstream licenses when using this work.
